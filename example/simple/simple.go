@@ -5,10 +5,11 @@ package main
 
 import (
 	"fmt"
-	"github.com/RangelReale/osin"
-	"github.com/RangelReale/osin/example"
 	"net/http"
 	"net/url"
+
+	"github.com/go-osin/osin"
+	"github.com/go-osin/osin/example"
 )
 
 func main() {

@@ -1,15 +1,16 @@
 package main
 
-// Use github.com/RangelReale/osincli client to test
+// Use github.com/go-osin/osincli client to test
 // Open url in browser:
 // http://localhost:14001
 
 import (
 	"fmt"
-	"github.com/RangelReale/osin"
-	"github.com/RangelReale/osin/example"
-	"github.com/RangelReale/osincli"
 	"net/http"
+
+	"github.com/go-osin/osin"
+	"github.com/go-osin/osin/example"
+	"github.com/go-osin/osincli"
 )
 
 func main() {

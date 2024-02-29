@@ -2,7 +2,8 @@ package example
 
 import (
 	"fmt"
-	"github.com/RangelReale/osin"
+
+	"github.com/go-osin/osin"
 )
 
 type TestStorage struct {
