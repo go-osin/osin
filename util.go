@@ -93,27 +93,35 @@ func CheckBearerAuth(r *http.Request) *BearerAuth {
 // getClientAuth checks client basic authentication in params if allowed,
 // otherwise gets it from the header.
 // Sets an error on the response if no auth is present or a server error occurs.
-func (s Server) getClientAuth(w *Response, r *http.Request, allowQueryParams bool) *BasicAuth {
+func (s *Server) getClientAuth(w *Response, r *http.Request, allowQueryParams bool) *BasicAuth {
+	username, password, baOk := r.BasicAuth()
+	if baOk {
+		// If BasicAuth header is present, the client secret (password) must not be empty.
+		// This is required for standard Basic Authentication.
+		if password == "" {
+			s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("empty client secret"), "get_client_auth=%s", "check auth error")
+			return nil
+		}
+		return &BasicAuth{
+			Username: username,
+			Password: password,
+		}
+	}
 
+	// If no BasicAuth header found, optionally fall back to form parameters.
 	if allowQueryParams {
-		// when using PKCE, the Client Secret can be empty
-		auth := &BasicAuth{
-			Username: r.FormValue("client_id"),
-			Password: r.FormValue("client_secret"),
-		}
-		if auth.Username != "" {
-			return auth
+		username = r.FormValue("client_id")
+		password = r.FormValue("client_secret")
+		if username != "" {
+			// In form parameters, client_secret may be empty (e.g. OAuth2 PKCE flow).
+			return &BasicAuth{
+				Username: username,
+				Password: password,
+			}
 		}
 	}
 
-	auth, err := CheckBasicAuth(r)
-	if err != nil {
-		s.setErrorAndLog(w, E_INVALID_REQUEST, err, "get_client_auth=%s", "check auth error")
-		return nil
-	}
-	if auth == nil {
-		s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("Client authentication not sent"), "get_client_auth=%s", "client authentication not sent")
-		return nil
-	}
-	return auth
+	// No valid client authentication provided
+	s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("Client authentication not sent"), "get_client_auth=%s", "client authentication not sent")
+	return nil
 }

@@ -439,6 +439,7 @@ func TestAccessAuthorizationCodePKCE(t *testing.T) {
 	for k, test := range testcases {
 		testStorage := NewTestingStorage()
 		sconfig := NewServerConfig()
+		sconfig.AllowClientSecretInParams = true
 		sconfig.AllowedAccessTypes = AllowedAccessType{AUTHORIZATION_CODE}
 		server := NewServer(sconfig, testStorage)
 		server.AccessTokenGen = &TestingAccessTokenGen{}
@@ -458,10 +459,11 @@ func TestAccessAuthorizationCodePKCE(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		req.SetBasicAuth("public-client", "")
+		// req.SetBasicAuth("public-client", "")
 
 		req.Form = make(url.Values)
 		req.Form.Set("grant_type", string(AUTHORIZATION_CODE))
+		req.Form.Set("client_id", "public-client")
 		req.Form.Set("code", "pkce-code")
 		req.Form.Set("state", "a")
 		req.Form.Set("code_verifier", test.Verifier)
@@ -474,7 +476,7 @@ func TestAccessAuthorizationCodePKCE(t *testing.T) {
 
 		if resp.IsError {
 			if test.ExpectedError == "" || test.ExpectedError != resp.ErrorId {
-				t.Errorf("%s: unexpected error: %v, %v", k, resp.ErrorId, resp.StatusText)
+				t.Errorf("%s: unexpected error: %v, %v", k, resp.ErrorId, resp.InternalError)
 				continue
 			}
 		}
