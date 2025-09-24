@@ -34,6 +34,7 @@ func CheckClientSecret(client Client, secret string) bool {
 
 // Return authorization header data
 func CheckBasicAuth(r *http.Request) (*BasicAuth, error) {
+	// TODO: migrate to r.BasicAuth()
 	if r.Header.Get("Authorization") == "" {
 		return nil, nil
 	}
@@ -95,15 +96,13 @@ func CheckBearerAuth(r *http.Request) *BearerAuth {
 func (s Server) getClientAuth(w *Response, r *http.Request, allowQueryParams bool) *BasicAuth {
 
 	if allowQueryParams {
-		// Allow for auth without password
-		if _, hasSecret := r.Form["client_secret"]; hasSecret {
-			auth := &BasicAuth{
-				Username: r.FormValue("client_id"),
-				Password: r.FormValue("client_secret"),
-			}
-			if auth.Username != "" {
-				return auth
-			}
+		// when using PKCE, the Client Secret can be empty
+		auth := &BasicAuth{
+			Username: r.FormValue("client_id"),
+			Password: r.FormValue("client_secret"),
+		}
+		if auth.Username != "" {
+			return auth
 		}
 	}
 
