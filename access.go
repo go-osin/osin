@@ -115,11 +115,11 @@ func (s *Server) HandleAccessRequest(w *Response, r *http.Request) *AccessReques
 	// Only allow GET or POST
 	if r.Method == "GET" {
 		if !s.Config.AllowGetAccessRequest {
-			s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("Request must be POST"), "access_request=%s", "GET request not allowed")
+			s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("request must be POST"), "access_request=%s", "GET request not allowed")
 			return nil
 		}
 	} else if r.Method != "POST" {
-		s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("Request must be POST"), "access_request=%s", "request must be POST")
+		s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("request must be POST"), "access_request=%s", "request must be POST")
 		return nil
 	}
 
@@ -219,7 +219,7 @@ func (s *Server) handleAuthorizationCodeRequest(w *Response, r *http.Request) *A
 		ret.RedirectUri = realRedirectUri
 	}
 	if ret.AuthorizeData.RedirectUri != ret.RedirectUri {
-		s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("Redirect uri is different"), "auth_code_request=%s", "client redirect does not match authorization data")
+		s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("redirect uri is different"), "auth_code_request=%s", "client redirect does not match authorization data")
 		return nil
 	}
 

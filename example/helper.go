@@ -48,7 +48,7 @@ func DownloadAccessToken(url string, auth *osin.BasicAuth, output map[string]int
 	}
 
 	if presp.StatusCode != 200 {
-		return errors.New("Invalid status code")
+		return errors.New("invalid status code")
 	}
 
 	jdec := json.NewDecoder(presp.Body)

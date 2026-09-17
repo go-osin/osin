@@ -17,7 +17,7 @@ import (
 	"github.com/go-osin/osin"
 	"github.com/go-osin/osin/example"
 
-	"gopkg.in/square/go-jose.v1"
+	"github.com/go-jose/go-jose/v4"
 )
 
 var (
@@ -25,7 +25,7 @@ var (
 	server = osin.NewServer(osin.NewServerConfig(), example.NewTestStorage())
 
 	jwtSigner  jose.Signer
-	publicKeys *jose.JsonWebKeySet
+	publicKeys *jose.JSONWebKeySet
 )
 
 func main() {
@@ -40,20 +40,20 @@ func main() {
 	}
 
 	// Configure jwtSigner and public keys.
-	privateKey := &jose.JsonWebKey{
+	privateKey := &jose.JSONWebKey{
 		Key:       key,
 		Algorithm: "RS256",
 		Use:       "sig",
 		KeyID:     "1", // KeyID should use the key thumbprint.
 	}
 
-	jwtSigner, err = jose.NewSigner(jose.RS256, privateKey)
+	jwtSigner, err = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT"))
 	if err != nil {
 		log.Fatalf("failed to create jwtSigner: %v", err)
 	}
-	publicKeys = &jose.JsonWebKeySet{
-		Keys: []jose.JsonWebKey{
-			jose.JsonWebKey{Key: &key.PublicKey,
+	publicKeys = &jose.JSONWebKeySet{
+		Keys: []jose.JSONWebKey{
+			jose.JSONWebKey{Key: &key.PublicKey,
 				Algorithm: "RS256",
 				Use:       "sig",
 				KeyID:     "1",

@@ -41,7 +41,7 @@ func CheckBasicAuth(r *http.Request) (*BasicAuth, error) {
 
 	s := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
 	if len(s) != 2 || s[0] != "Basic" {
-		return nil, errors.New("Invalid authorization header")
+		return nil, errors.New("invalid authorization header")
 	}
 
 	b, err := base64.StdEncoding.DecodeString(s[1])
@@ -50,7 +50,7 @@ func CheckBasicAuth(r *http.Request) (*BasicAuth, error) {
 	}
 	pair := strings.SplitN(string(b), ":", 2)
 	if len(pair) != 2 {
-		return nil, errors.New("Invalid authorization message")
+		return nil, errors.New("invalid authorization message")
 	}
 
 	// Decode the client_id and client_secret pairs as per

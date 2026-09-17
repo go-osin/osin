@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"net/url"
 
-	jwt "github.com/dgrijalva/jwt-go"
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/go-osin/osin"
 	"github.com/go-osin/osin/example"
 )
@@ -142,7 +142,7 @@ func main() {
 		// if parse, download and parse json
 		if r.FormValue("doparse") == "1" {
 			err := example.DownloadAccessToken(fmt.Sprintf("http://localhost:14000%s", aurl),
-				&osin.BasicAuth{"1234", "aabbccdd"}, jr)
+				&osin.BasicAuth{Username: "1234", Password: "aabbccdd"}, jr)
 			if err != nil {
 				w.Write([]byte(err.Error()))
 				w.Write([]byte("<br/>"))

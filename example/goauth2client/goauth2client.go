@@ -5,6 +5,7 @@ package main
 // http://localhost:14000/app
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -102,7 +103,7 @@ func main() {
 
 		// if parse, download and parse json
 		if r.FormValue("doparse") == "1" {
-			jr, err = client.Exchange(oauth2.NoContext, code)
+			jr, err = client.Exchange(context.Background(), code)
 			if err != nil {
 				jr = nil
 				w.Write([]byte(fmt.Sprintf("ERROR: %s<br/>\n", err)))

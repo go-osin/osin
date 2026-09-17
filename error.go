@@ -4,15 +4,15 @@ type DefaultErrorId string
 
 const (
 	E_INVALID_REQUEST           string = "invalid_request"
-	E_UNAUTHORIZED_CLIENT              = "unauthorized_client"
-	E_ACCESS_DENIED                    = "access_denied"
-	E_UNSUPPORTED_RESPONSE_TYPE        = "unsupported_response_type"
-	E_INVALID_SCOPE                    = "invalid_scope"
-	E_SERVER_ERROR                     = "server_error"
-	E_TEMPORARILY_UNAVAILABLE          = "temporarily_unavailable"
-	E_UNSUPPORTED_GRANT_TYPE           = "unsupported_grant_type"
-	E_INVALID_GRANT                    = "invalid_grant"
-	E_INVALID_CLIENT                   = "invalid_client"
+	E_UNAUTHORIZED_CLIENT       string = "unauthorized_client"
+	E_ACCESS_DENIED             string = "access_denied"
+	E_UNSUPPORTED_RESPONSE_TYPE string = "unsupported_response_type"
+	E_INVALID_SCOPE             string = "invalid_scope"
+	E_SERVER_ERROR              string = "server_error"
+	E_TEMPORARILY_UNAVAILABLE   string = "temporarily_unavailable"
+	E_UNSUPPORTED_GRANT_TYPE    string = "unsupported_grant_type"
+	E_INVALID_GRANT             string = "invalid_grant"
+	E_INVALID_CLIENT            string = "invalid_client"
 )
 
 var (

@@ -9,7 +9,7 @@ var (
 	// no entity is found in the storage. E.g. Storage.GetClient() returns ErrNotFound when
 	// client is not found. All other returned errors must be treated as storage-specific errors,
 	// like "connection lost", "connection refused", etc.
-	ErrNotFound = errors.New("Entity not found")
+	ErrNotFound = errors.New("entity not found")
 )
 
 // Storage interface

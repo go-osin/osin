@@ -358,7 +358,7 @@ type clientWithMatcher struct {
 }
 
 func (c *clientWithMatcher) GetId() string            { return c.Id }
-func (c *clientWithMatcher) GetSecret() string        { panic("called GetSecret"); return "" }
+func (c *clientWithMatcher) GetSecret() string        { panic("called GetSecret") }
 func (c *clientWithMatcher) GetRedirectUri() string   { return c.RedirectUri }
 func (c *clientWithMatcher) GetUserData() interface{} { return nil }
 func (c *clientWithMatcher) ClientSecretMatches(secret string) bool {
