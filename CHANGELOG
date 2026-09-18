@@ -1,11 +1,99 @@
-2014-06-25
-==========
+2026-09-18 (v1.1.0)
+==================
+* NEW: opt-in OAuth 2.1 enforcement behind ServerConfig.EnforceOAuth21.
+  While the flag is false, every existing code path is unchanged.
+  When true, the authorization code flow enforces:
+  - PKCE required on every authorization request (rfc7636,
+    https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-15);
+    invalid_request when missing for any client
+  - exact-match redirect URI validation, with the RFC 8252 §7.3
+    loopback port exception for 127.0.0.1 and [::1] over http;
+    subpath, query, port (non-loopback), and userinfo differences are
+    rejected as invalid_request
+  - public clients (no secret) authenticate at the token endpoint with
+    the client_id request parameter alone, regardless of
+    AllowClientSecretInParams; clients with a secret must still present it
+  - new validateUriListExact / validateUriExact / loopbackUriVariant
+    in urivalidate.go (used only when EnforceOAuth21 is true)
+* Out of scope for this release (other 2.1 gaps remain open): implicit
+  and password grant removal, iss metadata parameter, DPoP / mTLS sender
+  constraint tokens, discovery and dynamic client registration.
+* Internal modernization: interface{} -> any, strings.SplitN -> strings.Cut,
+  err.(T) -> errors.AsType[T], time.Until for remaining-expires math,
+  cmp.Or for description default in response.go, strings.FieldsSeq +
+  slices.Collect + slices.Contains in extraScopes, hoist of duplicate
+  FirstUri call in authorize.go, and the previously-discarded
+  r.ParseForm() errors in info.go and authorize.go are now checked.
+  None of these changes break the public API (any is an alias for
+  interface{}).
+* Full test coverage for the EnforceOAuth21 paths:
+  access_test.go, authorize_test.go, urivalidate_test.go.
+
+2026-09-18 (v1.0.3)
+==================
+* Internal modernization to Go 1.21+ idioms. No public API changes.
+  - interface{} -> any across the package
+  - slices.Contains replaces manual linear lookups in
+    AllowedAuthorizeType.Exists and AllowedAccessType.Exists
+  - strings.Cut replaces strings.SplitN + length check in CheckBasicAuth
+    and CheckBearerAuth; strings.EqualFold replaces strings.ToLower
+  - errors.AsType[UriValidationError] replaces the type assertion in
+    urivalidate.go
+  - time.Until replaces CreatedAt.Add(...).Sub(now) chains in info.go
+  - cmp.Or replaces if/else for description default in response.go
+  - strings.FieldsSeq + slices.Collect + slices.Contains replace the
+    manual map-based scope membership check in extraScopes
+  - hoisted the duplicate FirstUri call in authorize.go
+  - r.ParseForm() errors in info.go and authorize.go are now checked
+
+2026-09-17 (v1.0.2)
+==================
+* Dependency and toolchain upgrades (requires Go 1.26):
+  - go 1.24.0 -> 1.26.0
+  - dgrijalva/jwt-go -> github.com/golang-jwt/jwt/v5 v5.3.1
+  - square/go-jose.v1 -> github.com/go-jose/go-jose/v4 v4.1.5
+  - golang.org/x/oauth2 v0.31.0 -> v0.37.0
+  - google/uuid v1.0.0 -> v1.6.0
+* Lint / vet fixes:
+  - removed unreachable code in access.go (handleAssertionRequest)
+  - replaced unkeyed struct literals with field names in BasicAuth
+    construction in test files
+  - ST1005: error strings lowercased (e.g. "empty client secret",
+    "client authentication not sent", "parsing error",
+    "request must be POST")
+  - SA9004: const types tightened to string
+  - SA1019: switched from httptest.ResponseRecorder.HeaderMap to
+    .Result().Header
+  - S1039: removed redundant fmt.Sprintf in deferror.Get()
+* Client auth refactor: getClientAuth now uses r.BasicAuth() instead of
+  manual header parsing. When the Authorization header is present the
+  client secret (password) must not be empty.
+
+2018-07-18 (v1.0.1)
+==================
+* Per the OAuth2 spec, query strings in redirect URIs must be kept;
+  urivalidate.go now preserves the redirect's RawQuery when resolving
+  against the base.
+* Reworked redirect URI validation: resolve references against the
+  base URL and return the resolved URL to the caller, so subpath
+  matches return the actual redirected URL rather than the registered
+  one.
+* Scope separator is a single space (" "), not a comma (","). The
+  extraScopes check now splits on space.
+* URL-decode the client_id and client_secret in the Authorization
+  header (per RFC 6749 §2.3.1).
+* Authorize handler reads from form values via r.FormValue instead of
+  r.URL.Query, so x-www-form-urlencoded request bodies are accepted.
+* Added a Logger interface for server-side logging.
+
+2014-06-25 (v1.0.0)
+==================
 * BREAKING CHANGES:
 	- Storage interface has 2 new methods, Clone and Close, to better support storages
 	  that need to clone / close in each connection (mgo)
 	- Client was changed to be an interface instead of an struct. Because of that,
 	  the Storage interface also had to change, as interface is already a pointer.
-	
+
 	- HOW TO FIX YOUR CODE:
 		+ In your Storage, add a Clone function returning itself, and a do nothing Close.
 		+ In your Storage, replace all *osin.Client with osin.Client (remove the pointer reference)
@@ -14,6 +102,6 @@
 		+ Change all accesses using osin.Client to use the methods instead of the fields directly.
 		+ You MUST defer Response.Close in all your http handlers, otherwise some
 		  Storages may not clean correctly.
-		
+
 				resp := server.NewResponse()
 				defer resp.Close()
