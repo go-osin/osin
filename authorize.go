@@ -38,7 +38,7 @@ type AuthorizeRequest struct {
 	Expiration int32
 
 	// Data to be passed to storage. Not used by the library.
-	UserData interface{}
+	UserData any
 
 	// HttpRequest *http.Request for special use
 	HttpRequest *http.Request
@@ -73,7 +73,7 @@ type AuthorizeData struct {
 	CreatedAt time.Time
 
 	// Data to be passed to storage. Not used by the library.
-	UserData interface{}
+	UserData any
 
 	// Optional code_challenge as described in rfc7636
 	CodeChallenge string
@@ -104,7 +104,11 @@ type AuthorizeTokenGen interface {
 // HandleAuthorizeRequest is the main http.HandlerFunc for handling
 // authorization requests
 func (s *Server) HandleAuthorizeRequest(w *Response, r *http.Request) *AuthorizeRequest {
-	r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		w.SetErrorState(E_INVALID_REQUEST, "", "")
+		w.InternalError = err
+		return nil
+	}
 
 	// create the authorization request
 	unescapedUri, err := url.QueryUnescape(r.FormValue("redirect_uri"))
@@ -144,8 +148,10 @@ func (s *Server) HandleAuthorizeRequest(w *Response, r *http.Request) *Authorize
 
 	// check redirect uri, if there are multiple client redirect uri's
 	// don't set the uri
-	if ret.RedirectUri == "" && FirstUri(ret.Client.GetRedirectUri(), s.Config.RedirectUriSeparator) == ret.Client.GetRedirectUri() {
-		ret.RedirectUri = FirstUri(ret.Client.GetRedirectUri(), s.Config.RedirectUriSeparator)
+	registered := ret.Client.GetRedirectUri()
+	firstURI := FirstUri(registered, s.Config.RedirectUriSeparator)
+	if ret.RedirectUri == "" && firstURI == registered {
+		ret.RedirectUri = firstURI
 	}
 
 	if realRedirectUri, err := ValidateUriList(ret.Client.GetRedirectUri(), ret.RedirectUri, s.Config.RedirectUriSeparator); err != nil {
@@ -153,7 +159,7 @@ func (s *Server) HandleAuthorizeRequest(w *Response, r *http.Request) *Authorize
 		w.InternalError = err
 		return nil
 	} else {
-		ret.RedirectUri =  realRedirectUri
+		ret.RedirectUri = realRedirectUri
 	}
 
 	w.SetRedirect(ret.RedirectUri)

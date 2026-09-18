@@ -1,16 +1,13 @@
 package osin
 
+import "slices"
+
 // AllowedAuthorizeType is a collection of allowed auth request types
 type AllowedAuthorizeType []AuthorizeRequestType
 
 // Exists returns true if the auth type exists in the list
 func (t AllowedAuthorizeType) Exists(rt AuthorizeRequestType) bool {
-	for _, k := range t {
-		if k == rt {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(t, rt)
 }
 
 // AllowedAccessType is a collection of allowed access request types
@@ -18,12 +15,7 @@ type AllowedAccessType []AccessRequestType
 
 // Exists returns true if the access type exists in the list
 func (t AllowedAccessType) Exists(rt AccessRequestType) bool {
-	for _, k := range t {
-		if k == rt {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(t, rt)
 }
 
 // ServerConfig contains server configuration information

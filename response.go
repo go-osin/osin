@@ -1,6 +1,7 @@
 package osin
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/http"
@@ -8,7 +9,7 @@ import (
 )
 
 // Data for response output
-type ResponseData map[string]interface{}
+type ResponseData map[string]any
 
 // Response type enum
 type ResponseType int
@@ -70,9 +71,7 @@ func (r *Response) SetErrorState(id string, description string, state string) {
 // SetErrorUri sets an error id, description, state, and uri on the Response
 func (r *Response) SetErrorUri(id string, description string, uri string, state string) {
 	// get default error message
-	if description == "" {
-		description = deferror.Get(id)
-	}
+	description = cmp.Or(description, deferror.Get(id))
 
 	// set error parameters
 	r.IsError = true

@@ -6,13 +6,13 @@ import (
 
 func TestClientIntfUserData(t *testing.T) {
 	c := &DefaultClient{
-		UserData: make(map[string]interface{}),
+		UserData: make(map[string]any),
 	}
 
-	// check if the interface{} returned from the method is a reference
-	c.GetUserData().(map[string]interface{})["test"] = "none"
+	// check if the any returned from the method is a reference
+	c.GetUserData().(map[string]any)["test"] = "none"
 
-	if _, ok := c.GetUserData().(map[string]interface{})["test"]; !ok {
+	if _, ok := c.GetUserData().(map[string]any)["test"]; !ok {
 		t.Error("Returned interface is not a reference")
 	}
 }

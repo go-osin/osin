@@ -14,7 +14,10 @@ type InfoRequest struct {
 // HandleInfoRequest is an http.HandlerFunc for server information
 // NOT an RFC specification.
 func (s *Server) HandleInfoRequest(w *Response, r *http.Request) *InfoRequest {
-	r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		s.setErrorAndLog(w, E_INVALID_REQUEST, err, "handle_info_request=%s", "parsing error")
+		return nil
+	}
 	bearer := CheckBearerAuth(r)
 	if bearer == nil {
 		s.setErrorAndLog(w, E_INVALID_REQUEST, nil, "handle_info_request=%s", "bearer is nil")
@@ -70,7 +73,7 @@ func (s *Server) FinishInfoRequest(w *Response, r *http.Request, ir *InfoRequest
 	w.Output["client_id"] = ir.AccessData.Client.GetId()
 	w.Output["access_token"] = ir.AccessData.AccessToken
 	w.Output["token_type"] = s.Config.TokenType
-	w.Output["expires_in"] = ir.AccessData.CreatedAt.Add(time.Duration(ir.AccessData.ExpiresIn)*time.Second).Sub(s.Now()) / time.Second
+	w.Output["expires_in"] = time.Until(ir.AccessData.ExpireAt()) / time.Second
 	if ir.AccessData.RefreshToken != "" {
 		w.Output["refresh_token"] = ir.AccessData.RefreshToken
 	}

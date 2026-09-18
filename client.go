@@ -12,7 +12,7 @@ type Client interface {
 	GetRedirectUri() string
 
 	// Data to be passed to storage. Not used by the library.
-	GetUserData() interface{}
+	GetUserData() any
 }
 
 // ClientSecretMatcher is an optional interface clients can implement
@@ -28,7 +28,7 @@ type DefaultClient struct {
 	Id          string
 	Secret      string
 	RedirectUri string
-	UserData    interface{}
+	UserData    any
 }
 
 func (d *DefaultClient) GetId() string {
@@ -43,7 +43,7 @@ func (d *DefaultClient) GetRedirectUri() string {
 	return d.RedirectUri
 }
 
-func (d *DefaultClient) GetUserData() interface{} {
+func (d *DefaultClient) GetUserData() any {
 	return d.UserData
 }
 

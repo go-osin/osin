@@ -85,7 +85,7 @@ func main() {
 			return
 		}
 
-		jr := make(map[string]interface{})
+		jr := make(map[string]any)
 
 		// build access code url
 		aurl := fmt.Sprintf("/token?grant_type=authorization_code&client_id=1234&client_secret=aabbccdd&state=xyz&redirect_uri=%s&code=%s",

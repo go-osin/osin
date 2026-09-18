@@ -35,7 +35,7 @@ func TestResponseJSON(t *testing.T) {
 	}
 
 	// parse output json
-	output := make(map[string]interface{})
+	output := make(map[string]any)
 	if err := json.Unmarshal(w.Body.Bytes(), &output); err != nil {
 		t.Fatalf("Could not decode output json: %s", err)
 	}
@@ -77,7 +77,7 @@ func TestErrorResponseJSON(t *testing.T) {
 	}
 
 	// parse output json
-	output := make(map[string]interface{})
+	output := make(map[string]any)
 	if err := json.Unmarshal(w.Body.Bytes(), &output); err != nil {
 		t.Fatalf("Could not decode output json: %s", err)
 	}

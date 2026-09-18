@@ -99,7 +99,7 @@ type IDToken struct {
 // to discover OAuth2 resources.
 func handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	// For other example see: https://accounts.google.com/.well-known/openid-configuration
-	data := map[string]interface{}{
+	data := map[string]any{
 		"issuer":                                issuer,
 		"authorization_endpoint":                issuer + "/authorize",
 		"token_endpoint":                        issuer + "/token",

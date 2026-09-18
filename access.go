@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -48,7 +49,7 @@ type AccessRequest struct {
 	GenerateRefresh bool
 
 	// Data to be passed to storage. Not used by the library.
-	UserData interface{}
+	UserData any
 
 	// HttpRequest *http.Request for special use
 	HttpRequest *http.Request
@@ -87,7 +88,7 @@ type AccessData struct {
 	CreatedAt time.Time
 
 	// Data to be passed to storage. Not used by the library.
-	UserData interface{}
+	UserData any
 }
 
 // IsExpired returns true if access expired
@@ -260,23 +261,9 @@ func (s *Server) handleAuthorizationCodeRequest(w *Response, r *http.Request) *A
 }
 
 func extraScopes(access_scopes, refresh_scopes string) bool {
-	access_scopes_list := strings.Split(access_scopes, " ")
-	refresh_scopes_list := strings.Split(refresh_scopes, " ")
-
-	access_map := make(map[string]int)
-
-	for _, scope := range access_scopes_list {
-		if scope == "" {
-			continue
-		}
-		access_map[scope] = 1
-	}
-
-	for _, scope := range refresh_scopes_list {
-		if scope == "" {
-			continue
-		}
-		if _, ok := access_map[scope]; !ok {
+	accessScopes := slices.Collect(strings.FieldsSeq(access_scopes))
+	for scope := range strings.FieldsSeq(refresh_scopes) {
+		if !slices.Contains(accessScopes, scope) {
 			return true
 		}
 	}
@@ -554,11 +541,11 @@ func (s Server) getClient(auth *BasicAuth, storage Storage, w *Response) Client 
 }
 
 // setErrorAndLog sets the response error and internal error (if non-nil) and logs them along with the provided debug format string and arguments.
-func (s Server) setErrorAndLog(w *Response, responseError string, internalError error, debugFormat string, debugArgs ...interface{}) {
+func (s Server) setErrorAndLog(w *Response, responseError string, internalError error, debugFormat string, debugArgs ...any) {
 	format := "error=%v, internal_error=%#v " + debugFormat
 
 	w.InternalError = internalError
 	w.SetError(responseError, "")
 
-	s.Logger.Printf(format, append([]interface{}{responseError, internalError}, debugArgs...)...)
+	s.Logger.Printf(format, append([]any{responseError, internalError}, debugArgs...)...)
 }

@@ -39,29 +39,29 @@ func CheckBasicAuth(r *http.Request) (*BasicAuth, error) {
 		return nil, nil
 	}
 
-	s := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
-	if len(s) != 2 || s[0] != "Basic" {
+	kind, encoded, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || kind != "Basic" {
 		return nil, errors.New("invalid authorization header")
 	}
 
-	b, err := base64.StdEncoding.DecodeString(s[1])
+	b, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return nil, err
 	}
-	pair := strings.SplitN(string(b), ":", 2)
-	if len(pair) != 2 {
+	user, pass, ok := strings.Cut(string(b), ":")
+	if !ok {
 		return nil, errors.New("invalid authorization message")
 	}
 
 	// Decode the client_id and client_secret pairs as per
 	// https://tools.ietf.org/html/rfc6749#section-2.3.1
 
-	username, err := url.QueryUnescape(pair[0])
+	username, err := url.QueryUnescape(user)
 	if err != nil {
 		return nil, err
 	}
 
-	password, err := url.QueryUnescape(pair[1])
+	password, err := url.QueryUnescape(pass)
 	if err != nil {
 		return nil, err
 	}
@@ -76,15 +76,17 @@ func CheckBearerAuth(r *http.Request) *BearerAuth {
 	if authHeader == "" && authForm == "" {
 		return nil
 	}
+
 	token := authForm
 	if authHeader != "" {
-		s := strings.SplitN(authHeader, " ", 2)
-		if (len(s) != 2 || strings.ToLower(s[0]) != "bearer") && token == "" {
+		kind, value, ok := strings.Cut(authHeader, " ")
+		//Use authorization header token only if token type is bearer else query string access token would be returned
+		bearer := ok && value != "" && strings.EqualFold(kind, "bearer")
+		if !bearer && token == "" {
 			return nil
 		}
-		//Use authorization header token only if token type is bearer else query string access token would be returned
-		if len(s) > 0 && strings.ToLower(s[0]) == "bearer" {
-			token = s[1]
+		if bearer {
+			token = value
 		}
 	}
 	return &BearerAuth{Code: token}

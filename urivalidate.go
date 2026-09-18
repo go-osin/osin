@@ -73,7 +73,7 @@ func ValidateUriList(baseUriList string, redirectUri string, separator string) (
 		}
 
 		// if there was an error that is not a validation error, return it
-		if _, iok := err.(UriValidationError); !iok {
+		if _, ok := errors.AsType[UriValidationError](err); !ok {
 			return "", err
 		}
 	}

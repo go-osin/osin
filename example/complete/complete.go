@@ -115,7 +115,7 @@ func main() {
 			return
 		}
 
-		jr := make(map[string]interface{})
+		jr := make(map[string]any)
 
 		// build access code url
 		aurl := fmt.Sprintf("/token?grant_type=authorization_code&client_id=1234&client_secret=aabbccdd&state=xyz&redirect_uri=%s&code=%s",
@@ -182,7 +182,7 @@ func main() {
 		w.Write([]byte("<html><body>"))
 		w.Write([]byte("APP AUTH - PASSWORD<br/>"))
 
-		jr := make(map[string]interface{})
+		jr := make(map[string]any)
 
 		// build access code url
 		aurl := fmt.Sprintf("/token?grant_type=password&scope=everything&username=%s&password=%s",
@@ -228,7 +228,7 @@ func main() {
 		w.Write([]byte("<html><body>"))
 		w.Write([]byte("APP AUTH - CLIENT CREDENTIALS<br/>"))
 
-		jr := make(map[string]interface{})
+		jr := make(map[string]any)
 
 		// build access code url
 		aurl := "/token?grant_type=client_credentials"
@@ -273,7 +273,7 @@ func main() {
 		w.Write([]byte("<html><body>"))
 		w.Write([]byte("APP AUTH - ASSERTION<br/>"))
 
-		jr := make(map[string]interface{})
+		jr := make(map[string]any)
 
 		// build access code url
 		aurl := "/token?grant_type=assertion&assertion_type=urn:osin.example.complete&assertion=osin.data"
@@ -326,7 +326,7 @@ func main() {
 			return
 		}
 
-		jr := make(map[string]interface{})
+		jr := make(map[string]any)
 
 		// build access code url
 		aurl := fmt.Sprintf("/token?grant_type=refresh_token&refresh_token=%s", url.QueryEscape(code))
@@ -377,7 +377,7 @@ func main() {
 			return
 		}
 
-		jr := make(map[string]interface{})
+		jr := make(map[string]any)
 
 		// build access code url
 		aurl := fmt.Sprintf("/info?code=%s", url.QueryEscape(code))
