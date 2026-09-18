@@ -493,3 +493,383 @@ func TestAccessAuthorizationCodePKCE(t *testing.T) {
 		}
 	}
 }
+
+func TestAccessAuthorizationCodeEnforceOAuth21PKCE(t *testing.T) {
+	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	challenge := "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+	testcases := map[string]struct {
+		Challenge       string
+		ChallengeMethod string
+		Verifier        string
+		ExpectedError   string
+	}{
+		"good, S256": {
+			Challenge:       challenge,
+			ChallengeMethod: "S256",
+			Verifier:        verifier,
+		},
+		"good, plain": {
+			Challenge: "12345678901234567890123456789012345678901234567890",
+			Verifier:  "12345678901234567890123456789012345678901234567890",
+		},
+		"missing verifier": {
+			Challenge:       challenge,
+			ChallengeMethod: "S256",
+			ExpectedError:   "invalid_grant",
+		},
+		"bad verifier": {
+			Challenge:       challenge,
+			ChallengeMethod: "S256",
+			Verifier:        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+			ExpectedError:   "invalid_grant",
+		},
+		"code without challenge": {
+			ExpectedError: "invalid_grant",
+		},
+		"verifier without challenge": {
+			Verifier:      verifier,
+			ExpectedError: "invalid_request",
+		},
+	}
+
+	for k, test := range testcases {
+		testStorage := NewTestingStorage()
+		sconfig := NewServerConfig()
+		sconfig.EnforceOAuth21 = true
+		sconfig.AllowClientSecretInParams = false
+		sconfig.AllowedAccessTypes = AllowedAccessType{AUTHORIZATION_CODE}
+		server := NewServer(sconfig, testStorage)
+		server.AccessTokenGen = &TestingAccessTokenGen{}
+		testStorage.SaveAuthorize(&AuthorizeData{
+			Client:              testStorage.clients["public-client"],
+			Code:                "pkce-code",
+			ExpiresIn:           3600,
+			CreatedAt:           time.Now(),
+			RedirectUri:         "http://localhost:14000/appauth",
+			CodeChallenge:       test.Challenge,
+			CodeChallengeMethod: test.ChallengeMethod,
+		})
+		resp := server.NewResponse()
+
+		req, err := http.NewRequest("POST", "http://localhost:14000/appauth", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		req.Form = make(url.Values)
+		req.Form.Set("grant_type", string(AUTHORIZATION_CODE))
+		req.Form.Set("client_id", "public-client")
+		req.Form.Set("code", "pkce-code")
+		req.Form.Set("state", "a")
+		if test.Verifier != "" {
+			req.Form.Set("code_verifier", test.Verifier)
+		}
+		req.PostForm = make(url.Values)
+
+		if ar := server.HandleAccessRequest(resp, req); ar != nil {
+			ar.Authorized = true
+			server.FinishAccessRequest(resp, req, ar)
+		}
+
+		if resp.IsError {
+			if test.ExpectedError == "" || test.ExpectedError != resp.ErrorId {
+				t.Errorf("%s: unexpected error: %v, %v", k, resp.ErrorId, resp.InternalError)
+				continue
+			}
+		}
+		if test.ExpectedError == "" {
+			if resp.Type != DATA {
+				t.Fatalf("%s: Response should be data", k)
+			}
+			if d := resp.Output["access_token"]; d != "1" {
+				t.Fatalf("%s: Unexpected access token: %s", k, d)
+			}
+			if d := resp.Output["refresh_token"]; d != "r1" {
+				t.Fatalf("%s: Unexpected refresh token: %s", k, d)
+			}
+		}
+	}
+}
+
+func TestAccessAuthorizationCodeEnforceOAuth21ClientAuth(t *testing.T) {
+	challenge := "12345678901234567890123456789012345678901234567890"
+
+	testcases := map[string]struct {
+		codeClientID  string
+		formClientID  string
+		formSecret    string
+		basicAuth     bool
+		basicClientID string
+		basicSecret   string
+		allowParams   bool
+		ExpectedError string
+	}{
+		"public client with client_id parameter": {
+			codeClientID: "public-client",
+			formClientID: "public-client",
+		},
+		"public client with empty basic secret": {
+			codeClientID:  "public-client",
+			basicAuth:     true,
+			basicClientID: "public-client",
+			ExpectedError: "invalid_request",
+		},
+		"secret client with client_id parameter only": {
+			codeClientID:  "1234",
+			formClientID:  "1234",
+			ExpectedError: "invalid_client",
+		},
+		"secret client with ignored secret parameter": {
+			codeClientID:  "1234",
+			formClientID:  "1234",
+			formSecret:    "aabbccdd",
+			ExpectedError: "invalid_client",
+		},
+		"secret client with basic auth": {
+			codeClientID:  "1234",
+			basicAuth:     true,
+			basicClientID: "1234",
+			basicSecret:   "aabbccdd",
+		},
+		"secret client with allowed parameter credentials": {
+			codeClientID: "1234",
+			formClientID: "1234",
+			formSecret:   "aabbccdd",
+			allowParams:  true,
+		},
+		"no client credentials": {
+			codeClientID:  "public-client",
+			ExpectedError: "invalid_request",
+		},
+	}
+
+	for k, test := range testcases {
+		testStorage := NewTestingStorage()
+		client := testStorage.clients[test.codeClientID]
+		testStorage.SaveAuthorize(&AuthorizeData{
+			Client:        client,
+			Code:          "client-auth-code",
+			ExpiresIn:     3600,
+			CreatedAt:     time.Now(),
+			RedirectUri:   client.GetRedirectUri(),
+			CodeChallenge: challenge,
+		})
+
+		sconfig := NewServerConfig()
+		sconfig.EnforceOAuth21 = true
+		sconfig.AllowClientSecretInParams = test.allowParams
+		sconfig.AllowedAccessTypes = AllowedAccessType{AUTHORIZATION_CODE}
+		server := NewServer(sconfig, testStorage)
+		server.AccessTokenGen = &TestingAccessTokenGen{}
+		resp := server.NewResponse()
+
+		req, err := http.NewRequest("POST", "http://localhost:14000/appauth", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if test.basicAuth {
+			req.SetBasicAuth(test.basicClientID, test.basicSecret)
+		}
+		req.Form = make(url.Values)
+		req.Form.Set("grant_type", string(AUTHORIZATION_CODE))
+		req.Form.Set("code", "client-auth-code")
+		req.Form.Set("code_verifier", challenge)
+		if test.formClientID != "" {
+			req.Form.Set("client_id", test.formClientID)
+		}
+		if test.formSecret != "" {
+			req.Form.Set("client_secret", test.formSecret)
+		}
+		req.PostForm = make(url.Values)
+
+		if ar := server.HandleAccessRequest(resp, req); ar != nil {
+			ar.Authorized = true
+			server.FinishAccessRequest(resp, req, ar)
+		}
+
+		if test.ExpectedError != "" {
+			if !resp.IsError || resp.ErrorId != test.ExpectedError {
+				t.Errorf("%s: expected %s, got %v (%v)", k, test.ExpectedError, resp.ErrorId, resp.InternalError)
+			}
+			continue
+		}
+		if resp.IsError {
+			t.Errorf("%s: unexpected error: %v (%v)", k, resp.ErrorId, resp.InternalError)
+			continue
+		}
+		if d := resp.Output["access_token"]; d != "1" {
+			t.Errorf("%s: Unexpected access token: %s", k, d)
+		}
+	}
+}
+
+func TestAccessAuthorizationCodeEnforceOAuth21RedirectUri(t *testing.T) {
+	challenge := "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	registered := "http://localhost:14000/appauth;http://localhost:14000/other"
+
+	testcases := map[string]struct {
+		RedirectUri   string
+		ExpectedError string
+	}{
+		"matches the authorization request": {RedirectUri: "http://localhost:14000/appauth"},
+		"differs from the authorization request": {
+			RedirectUri:   "http://localhost:14000/other",
+			ExpectedError: "invalid_request",
+		},
+		"omitted falls back to the registered uri": {},
+	}
+
+	for k, test := range testcases {
+		testStorage := NewTestingStorage()
+		if err := testStorage.SetClient("client", &DefaultClient{
+			Id:          "client",
+			Secret:      "secret",
+			RedirectUri: registered,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		testStorage.SaveAuthorize(&AuthorizeData{
+			Client:              testStorage.clients["client"],
+			Code:                "redirect-code",
+			ExpiresIn:           3600,
+			CreatedAt:           time.Now(),
+			RedirectUri:         "http://localhost:14000/appauth",
+			CodeChallenge:       challenge,
+			CodeChallengeMethod: "S256",
+		})
+
+		sconfig := NewServerConfig()
+		sconfig.EnforceOAuth21 = true
+		sconfig.RedirectUriSeparator = ";"
+		sconfig.AllowedAccessTypes = AllowedAccessType{AUTHORIZATION_CODE}
+		server := NewServer(sconfig, testStorage)
+		server.AccessTokenGen = &TestingAccessTokenGen{}
+		resp := server.NewResponse()
+
+		req, err := http.NewRequest("POST", "http://localhost:14000/appauth", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBasicAuth("client", "secret")
+		req.Form = make(url.Values)
+		req.Form.Set("grant_type", string(AUTHORIZATION_CODE))
+		req.Form.Set("code", "redirect-code")
+		req.Form.Set("code_verifier", verifier)
+		if test.RedirectUri != "" {
+			req.Form.Set("redirect_uri", test.RedirectUri)
+		}
+		req.PostForm = make(url.Values)
+
+		if ar := server.HandleAccessRequest(resp, req); ar != nil {
+			ar.Authorized = true
+			server.FinishAccessRequest(resp, req, ar)
+		}
+
+		if test.ExpectedError != "" {
+			if !resp.IsError || resp.ErrorId != test.ExpectedError {
+				t.Errorf("%s: expected %s, got %v (%v)", k, test.ExpectedError, resp.ErrorId, resp.InternalError)
+			}
+			continue
+		}
+		if resp.IsError {
+			t.Errorf("%s: unexpected error: %v (%v)", k, resp.ErrorId, resp.InternalError)
+			continue
+		}
+		if d := resp.Output["access_token"]; d != "1" {
+			t.Errorf("%s: Unexpected access token: %s", k, d)
+		}
+	}
+}
+
+func TestEnforceOAuth21AuthorizationCodeFlow(t *testing.T) {
+	challenge := "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	redirectUri := "http://localhost:14000/appauth"
+
+	testcases := map[string]struct {
+		clientID  string
+		secret    string
+		basicAuth bool
+	}{
+		"client without a secret": {
+			clientID: "public-client",
+		},
+		"client with a secret": {
+			clientID:  "1234",
+			secret:    "aabbccdd",
+			basicAuth: true,
+		},
+	}
+
+	for k, test := range testcases {
+		t.Run(k, func(t *testing.T) {
+			sconfig := NewServerConfig()
+			sconfig.EnforceOAuth21 = true
+			sconfig.AllowClientSecretInParams = false
+			sconfig.AllowedAuthorizeTypes = AllowedAuthorizeType{CODE}
+			sconfig.AllowedAccessTypes = AllowedAccessType{AUTHORIZATION_CODE}
+			server := NewServer(sconfig, NewTestingStorage())
+			server.AuthorizeTokenGen = &TestingAuthorizeTokenGen{}
+			server.AccessTokenGen = &TestingAccessTokenGen{}
+
+			authResp := server.NewResponse()
+			authReq, err := http.NewRequest("GET", redirectUri, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			authReq.Form = make(url.Values)
+			authReq.Form.Set("response_type", string(CODE))
+			authReq.Form.Set("client_id", test.clientID)
+			authReq.Form.Set("redirect_uri", redirectUri)
+			authReq.Form.Set("state", "a")
+			authReq.Form.Set("code_challenge", challenge)
+			authReq.Form.Set("code_challenge_method", "S256")
+
+			if ar := server.HandleAuthorizeRequest(authResp, authReq); ar != nil {
+				ar.Authorized = true
+				server.FinishAuthorizeRequest(authResp, authReq, ar)
+			}
+			if authResp.IsError {
+				t.Fatalf("Authorization error: %v (%v)", authResp.ErrorId, authResp.InternalError)
+			}
+			code, ok := authResp.Output["code"].(string)
+			if !ok {
+				t.Fatalf("No authorization code issued: %#v", authResp.Output)
+			}
+
+			tokenResp := server.NewResponse()
+			tokenReq, err := http.NewRequest("POST", redirectUri, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tokenReq.Form = make(url.Values)
+			if test.basicAuth {
+				tokenReq.SetBasicAuth(test.clientID, test.secret)
+			} else {
+				// Clients without a secret identify themselves with the client_id parameter alone
+				tokenReq.Form.Set("client_id", test.clientID)
+			}
+			tokenReq.Form.Set("grant_type", string(AUTHORIZATION_CODE))
+			tokenReq.Form.Set("redirect_uri", redirectUri)
+			tokenReq.Form.Set("code", code)
+			tokenReq.Form.Set("code_verifier", verifier)
+			tokenReq.PostForm = make(url.Values)
+
+			if ar := server.HandleAccessRequest(tokenResp, tokenReq); ar != nil {
+				ar.Authorized = true
+				server.FinishAccessRequest(tokenResp, tokenReq, ar)
+			}
+			if tokenResp.IsError {
+				t.Fatalf("Token error: %v (%v)", tokenResp.ErrorId, tokenResp.InternalError)
+			}
+			if d := tokenResp.Output["access_token"]; d != "1" {
+				t.Fatalf("Unexpected access token: %s", d)
+			}
+			if d := tokenResp.Output["refresh_token"]; d != "r1" {
+				t.Fatalf("Unexpected refresh token: %s", d)
+			}
+		})
+	}
+}

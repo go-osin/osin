@@ -119,3 +119,82 @@ func FirstUri(baseUriList string, separator string) string {
 
 	return ""
 }
+
+// validateUriListExact validates that redirectUri is contained in baseUriList
+// using a simple string comparison.
+// baseUriList may be a string separated by separator.
+// If separator is blank, validate only 1 URI.
+func validateUriListExact(baseUriList string, redirectUri string, separator string) (realRedirectUri string, err error) {
+	var slist []string
+	if separator != "" {
+		slist = strings.Split(baseUriList, separator)
+	} else {
+		slist = make([]string, 0)
+		slist = append(slist, baseUriList)
+	}
+
+	for _, sitem := range slist {
+		realRedirectUri, err = validateUriExact(sitem, redirectUri)
+		// validated, return no error
+		if err == nil {
+			return realRedirectUri, nil
+		}
+
+		// if there was an error that is not a validation error, return it
+		if _, iok := err.(UriValidationError); !iok {
+			return "", err
+		}
+	}
+
+	return "", newUriValidationError("urls don't validate exactly", baseUriList, redirectUri)
+}
+
+// validateUriExact validates that redirectUri matches baseUri. The URIs must be
+// equal as strings, except that http loopback hosts may use a port that differs
+// from the registered one (https://www.rfc-editor.org/rfc/rfc8252#section-7.3).
+func validateUriExact(baseUri string, redirectUri string) (realRedirectUri string, err error) {
+	if baseUri == "" || redirectUri == "" {
+		return "", errors.New("urls cannot be blank")
+	}
+
+	base, err := url.Parse(baseUri)
+	if err != nil {
+		return "", err
+	}
+	redirect, err := url.Parse(redirectUri)
+	if err != nil {
+		return "", err
+	}
+
+	// must not have fragment
+	if base.Fragment != "" || redirect.Fragment != "" {
+		return "", newUriValidationError("url must not include fragment.", baseUri, redirectUri)
+	}
+
+	if baseUri != redirectUri && !loopbackUriVariant(base, redirect) {
+		return "", newUriValidationError("urls are not equal", baseUri, redirectUri)
+	}
+
+	return redirect.String(), nil
+}
+
+// loopbackUriVariant reports whether the two http URLs are equal once the port
+// is removed from the loopback host that RFC 8252 §7.3 allows to differ.
+func loopbackUriVariant(base *url.URL, redirect *url.URL) bool {
+	if base.Scheme != "http" || redirect.Scheme != "http" {
+		return false
+	}
+
+	host := base.Hostname()
+	if host != redirect.Hostname() || (host != "127.0.0.1" && host != "::1") {
+		return false
+	}
+	if base.Port() == redirect.Port() {
+		return false
+	}
+
+	portlessBase, portlessRedirect := *base, *redirect
+	portlessBase.Host, portlessRedirect.Host = host, host
+
+	return portlessBase.String() == portlessRedirect.String()
+}

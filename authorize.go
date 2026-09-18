@@ -154,7 +154,11 @@ func (s *Server) HandleAuthorizeRequest(w *Response, r *http.Request) *Authorize
 		ret.RedirectUri = firstURI
 	}
 
-	if realRedirectUri, err := ValidateUriList(ret.Client.GetRedirectUri(), ret.RedirectUri, s.Config.RedirectUriSeparator); err != nil {
+	validateRedirectUri := ValidateUriList
+	if s.Config.EnforceOAuth21 {
+		validateRedirectUri = validateUriListExact
+	}
+	if realRedirectUri, err := validateRedirectUri(ret.Client.GetRedirectUri(), ret.RedirectUri, s.Config.RedirectUriSeparator); err != nil {
 		w.SetErrorState(E_INVALID_REQUEST, "", ret.State)
 		w.InternalError = err
 		return nil
@@ -173,6 +177,11 @@ func (s *Server) HandleAuthorizeRequest(w *Response, r *http.Request) *Authorize
 
 			// Optional PKCE support (https://tools.ietf.org/html/rfc7636)
 			if codeChallenge := r.FormValue("code_challenge"); len(codeChallenge) == 0 {
+				if s.Config.EnforceOAuth21 {
+					// https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-15#section-4.1.2.1
+					w.SetErrorState(E_INVALID_REQUEST, "code_challenge required (rfc7636)", ret.State)
+					return nil
+				}
 				if s.Config.RequirePKCEForPublicClients && CheckClientSecret(ret.Client, "") {
 					// https://tools.ietf.org/html/rfc7636#section-4.4.1
 					w.SetErrorState(E_INVALID_REQUEST, "code_challenge (rfc7636) required for public clients", ret.State)

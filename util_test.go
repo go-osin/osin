@@ -155,3 +155,50 @@ func TestBearerAuth(t *testing.T) {
 		t.Errorf("Error decoding bearer auth")
 	}
 }
+
+func TestGetClientAuthEnforceOAuth21(t *testing.T) {
+	urlWithSecret, _ := url.Parse("http://host.tld/path?client_id=xxx&client_secret=yyy")
+	urlNoSecret, _ := url.Parse("http://host.tld/path?client_id=xxx")
+	urlNoClient, _ := url.Parse("http://host.tld/path")
+
+	sconfig := NewServerConfig()
+	sconfig.EnforceOAuth21 = true
+	server := NewServer(sconfig, NewTestingStorage())
+
+	var tests = []struct {
+		url            *url.URL
+		expectAuth     bool
+		expectUsername string
+	}{
+		{urlWithSecret, true, "xxx"},
+		{urlNoSecret, true, "xxx"},
+		{urlNoClient, false, ""},
+	}
+
+	for idx, tt := range tests {
+		w := new(Response)
+		r := &http.Request{Header: make(http.Header), URL: tt.url}
+		r.ParseForm()
+		auth := server.getClientAuth(w, r, false)
+		if !tt.expectAuth {
+			if auth != nil {
+				t.Errorf("%02d Auth should be nil for %v", idx, tt)
+			}
+			if !w.IsError || w.ErrorId != E_INVALID_REQUEST {
+				t.Errorf("%02d Expected %s, got %v", idx, E_INVALID_REQUEST, w.ErrorId)
+			}
+			continue
+		}
+		if auth == nil {
+			t.Fatalf("%02d Auth should not be nil for %v", idx, tt)
+		}
+		if auth.Username != tt.expectUsername {
+			t.Errorf("%02d Expected username %s, got %s", idx, tt.expectUsername, auth.Username)
+		}
+		// The client_secret parameter is ignored unless AllowClientSecretInParams
+		// is set, even when the request carries one.
+		if auth.Password != "" {
+			t.Errorf("%02d Expected empty password, got %s", idx, auth.Password)
+		}
+	}
+}

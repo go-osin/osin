@@ -56,6 +56,15 @@ type ServerConfig struct {
 	// RetainTokenAfter Refresh allows the server to retain the access and
 	// refresh token for re-use - default false
 	RetainTokenAfterRefresh bool
+
+	// EnforceOAuth21 enables the OAuth 2.1 baseline for the authorization code
+	// flow - default false. When true, code_challenge is required on
+	// authorization requests, redirect URIs are matched exactly (loopback
+	// hosts may use a different port), and clients without a secret may
+	// authenticate at the token endpoint with the client_id request parameter
+	// alone. Implicit and password grants, iss metadata, DPoP and mTLS are not
+	// affected.
+	EnforceOAuth21 bool
 }
 
 // NewServerConfig returns a new ServerConfig with default configuration
@@ -70,5 +79,6 @@ func NewServerConfig() *ServerConfig {
 		AllowClientSecretInParams: false,
 		AllowGetAccessRequest:     false,
 		RetainTokenAfterRefresh:   false,
+		EnforceOAuth21:            false,
 	}
 }

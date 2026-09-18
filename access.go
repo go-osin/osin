@@ -213,7 +213,11 @@ func (s *Server) handleAuthorizationCodeRequest(w *Response, r *http.Request) *A
 	if ret.RedirectUri == "" {
 		ret.RedirectUri = FirstUri(ret.Client.GetRedirectUri(), s.Config.RedirectUriSeparator)
 	}
-	if realRedirectUri, err := ValidateUriList(ret.Client.GetRedirectUri(), ret.RedirectUri, s.Config.RedirectUriSeparator); err != nil {
+	validateRedirectUri := ValidateUriList
+	if s.Config.EnforceOAuth21 {
+		validateRedirectUri = validateUriListExact
+	}
+	if realRedirectUri, err := validateRedirectUri(ret.Client.GetRedirectUri(), ret.RedirectUri, s.Config.RedirectUriSeparator); err != nil {
 		s.setErrorAndLog(w, E_INVALID_REQUEST, err, "auth_code_request=%s", "error validating client redirect")
 		return nil
 	} else {
@@ -225,6 +229,23 @@ func (s *Server) handleAuthorizationCodeRequest(w *Response, r *http.Request) *A
 	}
 
 	// Verify PKCE, if present in the authorization data
+	if s.Config.EnforceOAuth21 {
+		if len(ret.AuthorizeData.CodeChallenge) == 0 {
+			if ret.CodeVerifier != "" {
+				s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("code_verifier is not expected"),
+					"auth_code_request=%s", "pkce code verifier sent for a code without challenge")
+				return nil
+			}
+			s.setErrorAndLog(w, E_INVALID_GRANT, errors.New("authorization code is not bound to a code_challenge"),
+				"auth_code_request=%s", "pkce code challenge missing from authorization data")
+			return nil
+		}
+		if ret.CodeVerifier == "" {
+			s.setErrorAndLog(w, E_INVALID_GRANT, errors.New("code_verifier is required"),
+				"auth_code_request=%s", "pkce code verifier is missing")
+			return nil
+		}
+	}
 	if len(ret.AuthorizeData.CodeChallenge) > 0 {
 		// https://tools.ietf.org/html/rfc7636#section-4.1
 		if matched := pkceMatcher.MatchString(ret.CodeVerifier); !matched {
@@ -525,6 +546,13 @@ func (s Server) getClient(auth *BasicAuth, storage Storage, w *Response) Client 
 	}
 	if client == nil {
 		s.setErrorAndLog(w, E_UNAUTHORIZED_CLIENT, nil, "get_client=%s", "client is nil")
+		return nil
+	}
+
+	// OAuth 2.1 clients without a secret authenticate with the client_id alone;
+	// clients holding a secret must present it.
+	if s.Config.EnforceOAuth21 && auth.Password == "" && !CheckClientSecret(client, "") {
+		s.setErrorAndLog(w, E_INVALID_CLIENT, nil, "get_client=%s, client_id=%v", "client secret required", client.GetId())
 		return nil
 	}
 

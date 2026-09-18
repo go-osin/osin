@@ -111,9 +111,15 @@ func (s *Server) getClientAuth(w *Response, r *http.Request, allowQueryParams bo
 	}
 
 	// If no BasicAuth header found, optionally fall back to form parameters.
-	if allowQueryParams {
+	// EnforceOAuth21 clients without a secret identify themselves with the
+	// client_id parameter alone, so it is accepted regardless of
+	// AllowClientSecretInParams. The client_secret parameter is only read when
+	// parameter credentials are enabled.
+	if allowQueryParams || s.Config.EnforceOAuth21 {
 		username = r.FormValue("client_id")
-		password = r.FormValue("client_secret")
+		if allowQueryParams {
+			password = r.FormValue("client_secret")
+		}
 		if username != "" {
 			// In form parameters, client_secret may be empty (e.g. OAuth2 PKCE flow).
 			return &BasicAuth{
