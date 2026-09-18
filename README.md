@@ -13,6 +13,16 @@ http://tools.ietf.org/html/rfc6749 and http://tools.ietf.org/html/draft-ietf-oau
 It also includes support for PKCE, as specified at https://tools.ietf.org/html/rfc7636,
 which increases security for code-exchange flows for public OAuth clients.
 
+Setting `EnforceOAuth21` on `ServerConfig` (default `false`) turns the authorization code
+flow into the OAuth 2.1 baseline: `code_challenge` is required on authorization requests,
+the issued code can only be exchanged with a matching `code_verifier`, `redirect_uri` must
+match a registered URI exactly including the query string (loopback hosts registered as
+`http://127.0.0.1` or `http://[::1]` may use a different port, per RFC 8252), and clients
+that have no secret may identify themselves at the token endpoint with the request body
+`client_id` alone, regardless of `AllowClientSecretInParams`. Clients holding a secret must
+still authenticate. Implicit and password grants, `iss` metadata, DPoP and mTLS are not
+affected by this flag.
+
 Using it, you can build your own OAuth2 authentication service.
 
 The library implements the majority of the specification, like authorization and token endpoints, and authorization code, implicit, resource owner and client credentials grant types.
