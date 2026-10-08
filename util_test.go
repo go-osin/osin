@@ -85,14 +85,14 @@ func TestGetClientAuth(t *testing.T) {
 		{headerNoAuth, urlWithSecret, false, false},
 		{headerNoAuth, urlWithEmptySecret, true, true},
 		{headerNoAuth, urlWithEmptySecret, false, false},
-		{headerNoAuth, urlNoSecret, true, true},
+		{headerNoAuth, urlNoSecret, true, false},
 		{headerNoAuth, urlNoSecret, false, false},
 
 		{headerBadAuth, urlWithSecret, true, true},
 		{headerBadAuth, urlWithSecret, false, false},
 		{headerBadAuth, urlWithEmptySecret, true, true},
 		{headerBadAuth, urlWithEmptySecret, false, false},
-		{headerBadAuth, urlNoSecret, true, true},
+		{headerBadAuth, urlNoSecret, true, false},
 		{headerBadAuth, urlNoSecret, false, false},
 
 		{headerOKAuth, urlWithSecret, true, true},
@@ -104,7 +104,7 @@ func TestGetClientAuth(t *testing.T) {
 	}
 
 	for idx, tt := range tests {
-		w := new(Response)
+		w := &Response{Storage: server.Storage}
 		r := &http.Request{Header: tt.header, URL: tt.url}
 		r.ParseForm()
 		auth := server.getClientAuth(w, r, tt.allowQueryParams)

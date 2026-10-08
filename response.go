@@ -33,6 +33,10 @@ type Response struct {
 	InternalError      error
 	RedirectInFragment bool
 
+	// Issuer is returned as the `iss` parameter of redirect responses
+	// (rfc9207). Blank omits the parameter.
+	Issuer string
+
 	// Storage to use in this response - required
 	Storage Storage
 }
@@ -128,6 +132,11 @@ func (r *Response) GetRedirectUrl() (string, error) {
 	// add parameters
 	for n, v := range r.Output {
 		q.Set(n, fmt.Sprint(v))
+	}
+
+	// https://www.rfc-editor.org/rfc/rfc9207#section-2
+	if r.Issuer != "" {
+		q.Set("iss", r.Issuer)
 	}
 
 	// https://tools.ietf.org/html/rfc6749#section-4.2.2

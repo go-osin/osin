@@ -30,5 +30,6 @@ func NewServer(config *ServerConfig, storage Storage) *Server {
 func (s *Server) NewResponse() *Response {
 	r := NewResponse(s.Storage)
 	r.ErrorStatusCode = s.Config.ErrorStatusCode
+	r.Issuer = s.Config.Issuer
 	return r
 }

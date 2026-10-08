@@ -267,3 +267,140 @@ func TestValidateUriListExact(t *testing.T) {
 		t.Error("Expected subpath of second list entry to fail")
 	}
 }
+
+func TestValidateUriExactList(t *testing.T) {
+	registered := []string{"https://one.example.com/cb", "http://127.0.0.1/cb"}
+
+	valid := [][]string{
+		{
+			"https://one.example.com/cb",
+			"https://one.example.com/cb",
+		},
+		{
+			// Any entry may match
+			"http://127.0.0.1:49152/cb",
+			"http://127.0.0.1:49152/cb",
+		},
+	}
+	for _, v := range valid {
+		if realRedirectUri, err := validateUriExactList(registered, v[0]); err != nil {
+			t.Errorf("Expected validateUriExactList(%v, %s) to succeed, got %v", registered, v[0], err)
+		} else if realRedirectUri != v[1] {
+			t.Errorf("Expected validateUriExactList(%v, %s) to return uri %s, got %s", registered, v[0], v[1], realRedirectUri)
+		}
+	}
+
+	invalid := []string{
+		// Not registered
+		"https://three.example.com/cb",
+		// Subpaths are not accepted
+		"https://one.example.com/cb/extra",
+		// Query strings are compared as strings
+		"https://one.example.com/cb?x=1",
+		// The loopback exception does not relax the path
+		"http://127.0.0.1:49152/cb/extra",
+	}
+	for _, v := range invalid {
+		if _, err := validateUriExactList(registered, v); err == nil {
+			t.Errorf("Expected validateUriExactList(%v, %s) to fail", registered, v)
+		}
+	}
+}
+
+func TestClientRedirectUris(t *testing.T) {
+	sconfig := NewServerConfig()
+	sconfig.RedirectUriSeparator = ";"
+	server := NewServer(sconfig, NewTestingStorage())
+
+	// A client that returns a set keeps it as it is, and the set alone decides
+	// the matching: the separator and the legacy single value are not used.
+	setClient := &DefaultClient{
+		Id:           "set-client",
+		RedirectUri:  "https://legacy.example.com/cb",
+		RedirectUris: []string{"https://one.example.com/cb", "https://two.example.com/cb"},
+	}
+	registered, validate := server.clientRedirectUris(setClient)
+	if len(registered) != 2 || registered[0] != "https://one.example.com/cb" || registered[1] != "https://two.example.com/cb" {
+		t.Errorf("Unexpected registered uris: %v", registered)
+	}
+	if _, err := validate("https://two.example.com/cb"); err != nil {
+		t.Errorf("Expected every entry of the set to match, got %v", err)
+	}
+	if _, err := validate("https://legacy.example.com/cb"); err == nil {
+		t.Error("Expected the legacy single value to be ignored when a set is registered")
+	}
+	if _, err := validate("https://two.example.com/cb/extra"); err == nil {
+		t.Error("Expected a subpath of a registered uri to fail")
+	}
+
+	// A client without a set falls back to the legacy single value, split by
+	// the separator, compared the way EnforceOAuth21 selects.
+	legacyClient := &DefaultClient{
+		Id:          "legacy-client",
+		RedirectUri: "https://one.example.com/cb;https://two.example.com/cb",
+	}
+	registered, validate = server.clientRedirectUris(legacyClient)
+	if len(registered) != 2 || registered[0] != "https://one.example.com/cb" {
+		t.Errorf("Unexpected registered uris: %v", registered)
+	}
+	if _, err := validate("https://two.example.com/cb/extra"); err != nil {
+		t.Errorf("Expected a subpath to match while EnforceOAuth21 is off, got %v", err)
+	}
+
+	sconfig.EnforceOAuth21 = true
+	_, validate = server.clientRedirectUris(legacyClient)
+	if _, err := validate("https://two.example.com/cb/extra"); err == nil {
+		t.Error("Expected a subpath to fail while EnforceOAuth21 is on")
+	}
+	if _, err := validate("https://two.example.com/cb"); err != nil {
+		t.Errorf("Expected a registered uri to match while EnforceOAuth21 is on, got %v", err)
+	}
+
+	// An empty set falls back to the legacy single value as well
+	emptySetClient := &DefaultClient{
+		Id:           "empty-set-client",
+		RedirectUri:  "https://legacy.example.com/cb",
+		RedirectUris: []string{},
+	}
+	registered, validate = server.clientRedirectUris(emptySetClient)
+	if len(registered) != 1 || registered[0] != "https://legacy.example.com/cb" {
+		t.Errorf("Unexpected registered uris: %v", registered)
+	}
+	if _, err := validate("https://legacy.example.com/cb"); err != nil {
+		t.Errorf("Expected the legacy single value to match, got %v", err)
+	}
+}
+
+func TestClientHasRedirectUri(t *testing.T) {
+	testcases := map[string]struct {
+		client   Client
+		expected bool
+	}{
+		"single value": {
+			client:   &clientWithoutMatcher{Id: "client", RedirectUri: "https://app.example.com/cb"},
+			expected: true,
+		},
+		"set without a single value": {
+			client:   &clientWithRedirectUriSet{Id: "client", RedirectUris: []string{"https://app.example.com/cb"}},
+			expected: true,
+		},
+		"set with a single value": {
+			client:   &DefaultClient{Id: "client", RedirectUri: "https://app.example.com/cb", RedirectUris: []string{"https://app.example.com/cb"}},
+			expected: true,
+		},
+		"neither": {
+			client:   &DefaultClient{Id: "client"},
+			expected: false,
+		},
+		"empty single value": {
+			client:   &clientWithoutMatcher{Id: "client"},
+			expected: false,
+		},
+	}
+
+	for k, tt := range testcases {
+		if got := clientHasRedirectUri(tt.client); got != tt.expected {
+			t.Errorf("%s: expected %v, got %v", k, tt.expected, got)
+		}
+	}
+}

@@ -120,33 +120,78 @@ func FirstUri(baseUriList string, separator string) string {
 	return ""
 }
 
-// validateUriListExact validates that redirectUri is contained in baseUriList
-// using a simple string comparison.
-// baseUriList may be a string separated by separator.
-// If separator is blank, validate only 1 URI.
-func validateUriListExact(baseUriList string, redirectUri string, separator string) (realRedirectUri string, err error) {
-	var slist []string
-	if separator != "" {
-		slist = strings.Split(baseUriList, separator)
-	} else {
-		slist = make([]string, 0)
-		slist = append(slist, baseUriList)
+// splitUriList makes a list of uris from a separator separated string.
+// If separator is blank, the string is a single uri.
+func splitUriList(baseUriList string, separator string) []string {
+	if separator == "" {
+		return []string{baseUriList}
+	}
+	return strings.Split(baseUriList, separator)
+}
+
+// clientHasRedirectUri reports whether a client registered any redirect uri,
+// either as a set or as the single GetRedirectUri() value.
+func clientHasRedirectUri(client Client) bool {
+	if uriSet, ok := client.(ClientRedirectUriSet); ok && len(uriSet.GetRedirectUris()) > 0 {
+		return true
+	}
+	return client.GetRedirectUri() != ""
+}
+
+// clientRedirectUris resolves how the redirect URIs registered for a client
+// are used. It returns the registered uris and the validation to apply to a
+// requested redirect_uri. Both come from the same resolution so a caller cannot
+// pair a uri set with the wrong comparison.
+//
+// A client implementing ClientRedirectUriSet supplies the set itself: every
+// entry is compared exactly, with the RFC 8252 §7.3 loopback port exception,
+// and RedirectUriSeparator and EnforceOAuth21 are ignored. Every other client
+// falls back to GetRedirectUri() split by RedirectUriSeparator, compared with
+// the function EnforceOAuth21 selects.
+func (s *Server) clientRedirectUris(client Client) (registered []string, validate func(redirectUri string) (string, error)) {
+	if uriSet, ok := client.(ClientRedirectUriSet); ok {
+		if uris := uriSet.GetRedirectUris(); len(uris) > 0 {
+			return uris, func(redirectUri string) (string, error) {
+				return validateUriExactList(uris, redirectUri)
+			}
+		}
 	}
 
-	for _, sitem := range slist {
-		realRedirectUri, err = validateUriExact(sitem, redirectUri)
+	registeredUri := client.GetRedirectUri()
+	validateUri := ValidateUriList
+	if s.Config.EnforceOAuth21 {
+		validateUri = validateUriListExact
+	}
+	return splitUriList(registeredUri, s.Config.RedirectUriSeparator), func(redirectUri string) (string, error) {
+		return validateUri(registeredUri, redirectUri, s.Config.RedirectUriSeparator)
+	}
+}
+
+// validateUriExactList validates that redirectUri matches one of the registered
+// uris exactly, keeping the loopback port exception of validateUriExact.
+func validateUriExactList(registered []string, redirectUri string) (realRedirectUri string, err error) {
+	for _, registeredUri := range registered {
+		realRedirectUri, err = validateUriExact(registeredUri, redirectUri)
 		// validated, return no error
 		if err == nil {
 			return realRedirectUri, nil
 		}
 
 		// if there was an error that is not a validation error, return it
-		if _, iok := err.(UriValidationError); !iok {
+		if _, ok := errors.AsType[UriValidationError](err); !ok {
 			return "", err
 		}
 	}
 
-	return "", newUriValidationError("urls don't validate exactly", baseUriList, redirectUri)
+	return "", newUriValidationError("urls don't validate exactly", strings.Join(registered, " "), redirectUri)
+}
+
+// validateUriListExact validates that redirectUri is contained in baseUriList
+// using a simple string comparison.
+// baseUriList may be a string separated by separator.
+// If separator is blank, validate only 1 URI.
+func validateUriListExact(baseUriList string, redirectUri string, separator string) (realRedirectUri string, err error) {
+	return validateUriExactList(splitUriList(baseUriList, separator), redirectUri)
 }
 
 // validateUriExact validates that redirectUri matches baseUri. The URIs must be
