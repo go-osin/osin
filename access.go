@@ -89,6 +89,12 @@ type AccessData struct {
 
 	// Data to be passed to storage. Not used by the library.
 	UserData any
+
+	// Sender constraint that binds the token to the key material the client
+	// demonstrated at the token endpoint (a DPoP JWK thumbprint, an mTLS
+	// certificate thumbprint, ...). The zero value means the token is not
+	// bound to a key. See ServerConfig.RequireSenderConstrainedTokens.
+	SenderConstraint string
 }
 
 // IsExpired returns true if access expired
@@ -194,7 +200,7 @@ func (s *Server) handleAuthorizationCodeRequest(w *Response, r *http.Request) *A
 		s.setErrorAndLog(w, E_UNAUTHORIZED_CLIENT, nil, "auth_code_request=%s", "authorization client is nil")
 		return nil
 	}
-	if ret.AuthorizeData.Client.GetRedirectUri() == "" {
+	if !clientHasRedirectUri(ret.AuthorizeData.Client) {
 		s.setErrorAndLog(w, E_UNAUTHORIZED_CLIENT, nil, "auth_code_request=%s", "client redirect uri is empty")
 		return nil
 	}
@@ -210,14 +216,11 @@ func (s *Server) handleAuthorizationCodeRequest(w *Response, r *http.Request) *A
 	}
 
 	// check redirect uri
+	registered, validateRedirectUri := s.clientRedirectUris(ret.Client)
 	if ret.RedirectUri == "" {
-		ret.RedirectUri = FirstUri(ret.Client.GetRedirectUri(), s.Config.RedirectUriSeparator)
+		ret.RedirectUri = registered[0]
 	}
-	validateRedirectUri := ValidateUriList
-	if s.Config.EnforceOAuth21 {
-		validateRedirectUri = validateUriListExact
-	}
-	if realRedirectUri, err := validateRedirectUri(ret.Client.GetRedirectUri(), ret.RedirectUri, s.Config.RedirectUriSeparator); err != nil {
+	if realRedirectUri, err := validateRedirectUri(ret.RedirectUri); err != nil {
 		s.setErrorAndLog(w, E_INVALID_REQUEST, err, "auth_code_request=%s", "error validating client redirect")
 		return nil
 	} else {
@@ -334,7 +337,7 @@ func (s *Server) handleRefreshTokenRequest(w *Response, r *http.Request) *Access
 		s.setErrorAndLog(w, E_UNAUTHORIZED_CLIENT, nil, "refresh_token=%s", "access data client is nil")
 		return nil
 	}
-	if ret.AccessData.Client.GetRedirectUri() == "" {
+	if !clientHasRedirectUri(ret.AccessData.Client) {
 		s.setErrorAndLog(w, E_UNAUTHORIZED_CLIENT, nil, "refresh_token=%s", "access data client redirect uri is empty")
 		return nil
 	}
@@ -344,6 +347,12 @@ func (s *Server) handleRefreshTokenRequest(w *Response, r *http.Request) *Access
 		s.setErrorAndLog(w, E_INVALID_CLIENT, errors.New("Client id must be the same from previous token"), "refresh_token=%s, current=%v, previous=%v", "client mismatch", ret.Client.GetId(), ret.AccessData.Client.GetId())
 		return nil
 
+	}
+
+	// the token must carry the sender constraint the policy requires
+	if s.Config.RequireSenderConstrainedTokens && ret.AccessData.SenderConstraint == "" {
+		s.setErrorAndLog(w, E_INVALID_GRANT, errors.New("refresh token is not sender constrained"), "refresh_token=%s", "sender constraint missing")
+		return nil
 	}
 
 	// set rest of data
@@ -392,7 +401,8 @@ func (s *Server) handlePasswordRequest(w *Response, r *http.Request) *AccessRequ
 	}
 
 	// set redirect uri
-	ret.RedirectUri = FirstUri(ret.Client.GetRedirectUri(), s.Config.RedirectUriSeparator)
+	registered, _ := s.clientRedirectUris(ret.Client)
+	ret.RedirectUri = registered[0]
 
 	return ret
 }
@@ -419,7 +429,8 @@ func (s *Server) handleClientCredentialsRequest(w *Response, r *http.Request) *A
 	}
 
 	// set redirect uri
-	ret.RedirectUri = FirstUri(ret.Client.GetRedirectUri(), s.Config.RedirectUriSeparator)
+	registered, _ := s.clientRedirectUris(ret.Client)
+	ret.RedirectUri = registered[0]
 
 	return ret
 }
@@ -454,7 +465,8 @@ func (s *Server) handleAssertionRequest(w *Response, r *http.Request) *AccessReq
 	}
 
 	// set redirect uri
-	ret.RedirectUri = FirstUri(ret.Client.GetRedirectUri(), s.Config.RedirectUriSeparator)
+	registered, _ := s.clientRedirectUris(ret.Client)
+	ret.RedirectUri = registered[0]
 
 	return ret
 }
@@ -470,6 +482,13 @@ func (s *Server) FinishAccessRequest(w *Response, r *http.Request, ar *AccessReq
 		redirectUri = ar.RedirectUri
 	}
 	if ar.Authorized {
+		// a sender constrained deployment must not issue tokens the storage
+		// would silently strip of their binding
+		if s.Config.RequireSenderConstrainedTokens && !senderConstraintsSupported(w.Storage) {
+			s.setErrorAndLog(w, E_SERVER_ERROR, errors.New("storage cannot persist sender constraints"), "finish_access_request=%s", "sender constraint storage capability missing")
+			return
+		}
+
 		var ret *AccessData
 		var err error
 
@@ -494,6 +513,20 @@ func (s *Server) FinishAccessRequest(w *Response, r *http.Request, ar *AccessReq
 			}
 		} else {
 			ret = ar.ForceAccessData
+		}
+
+		// a sender constrained deployment must not issue a token whose
+		// binding is empty, it would only be rejected when it is used. A token
+		// that replaces another one keeps the binding the client already
+		// demonstrated; anything else has to fail here.
+		if s.Config.RequireSenderConstrainedTokens {
+			if ret.SenderConstraint == "" && ar.AccessData != nil {
+				ret.SenderConstraint = ar.AccessData.SenderConstraint
+			}
+			if ret.SenderConstraint == "" {
+				s.setErrorAndLog(w, E_SERVER_ERROR, errors.New("access token is not sender constrained"), "finish_access_request=%s", "sender constraint missing")
+				return
+			}
 		}
 
 		// save access token
@@ -561,7 +594,7 @@ func (s Server) getClient(auth *BasicAuth, storage Storage, w *Response) Client 
 		return nil
 	}
 
-	if client.GetRedirectUri() == "" {
+	if !clientHasRedirectUri(client) {
 		s.setErrorAndLog(w, E_UNAUTHORIZED_CLIENT, nil, "get_client=%s", "client redirect uri is empty")
 		return nil
 	}

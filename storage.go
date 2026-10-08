@@ -57,3 +57,21 @@ type Storage interface {
 	// RemoveRefresh revokes or deletes refresh AccessData.
 	RemoveRefresh(token string) error
 }
+
+// SenderConstraintStorage is an optional interface a Storage can implement to
+// declare that it persists AccessData.SenderConstraint. Enabling
+// ServerConfig.RequireSenderConstrainedTokens without it fails the request
+// instead of issuing a token whose binding would be dropped on the way to the
+// store.
+type SenderConstraintStorage interface {
+	// SupportsSenderConstraints reports that AccessData.SenderConstraint is
+	// stored and restored by this storage.
+	SupportsSenderConstraints() bool
+}
+
+// senderConstraintsSupported reports whether storage persists sender
+// constraints.
+func senderConstraintsSupported(storage Storage) bool {
+	senderConstraintStorage, ok := storage.(SenderConstraintStorage)
+	return ok && senderConstraintStorage.SupportsSenderConstraints()
+}

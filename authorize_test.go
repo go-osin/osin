@@ -488,3 +488,275 @@ func TestAuthorizeCodeEnforceOAuth21RejectsInvalidPKCE(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthorizeCodeRedirectUriSet(t *testing.T) {
+	testcases := map[string]struct {
+		registeredUris []string
+		redirectUri    string
+		expectError    bool
+		expectedUri    string
+	}{
+		"first entry of the set": {
+			registeredUris: []string{"https://app.example.com/cb", "https://other.example.com/cb"},
+			redirectUri:    "https://app.example.com/cb",
+			expectedUri:    "https://app.example.com/cb",
+		},
+		"last entry of the set": {
+			registeredUris: []string{"https://app.example.com/cb", "https://other.example.com/cb"},
+			redirectUri:    "https://other.example.com/cb",
+			expectedUri:    "https://other.example.com/cb",
+		},
+		"subpath of an entry": {
+			registeredUris: []string{"https://app.example.com/cb", "https://other.example.com/cb"},
+			redirectUri:    "https://app.example.com/cb/extra",
+			expectError:    true,
+		},
+		"unregistered uri": {
+			registeredUris: []string{"https://app.example.com/cb", "https://other.example.com/cb"},
+			redirectUri:    "https://evil.example.com/cb",
+			expectError:    true,
+		},
+		"query string must match": {
+			registeredUris: []string{"https://app.example.com/cb?x=1"},
+			redirectUri:    "https://app.example.com/cb?x=2",
+			expectError:    true,
+		},
+		"loopback port may differ": {
+			registeredUris: []string{"http://127.0.0.1/cb"},
+			redirectUri:    "http://127.0.0.1:49152/cb",
+			expectedUri:    "http://127.0.0.1:49152/cb",
+		},
+		"loopback subpath is rejected": {
+			registeredUris: []string{"http://127.0.0.1/cb"},
+			redirectUri:    "http://127.0.0.1:49152/cb/extra",
+			expectError:    true,
+		},
+		"omitted with a single entry": {
+			registeredUris: []string{"https://app.example.com/cb"},
+			expectedUri:    "https://app.example.com/cb",
+		},
+		"omitted with several entries": {
+			registeredUris: []string{"https://app.example.com/cb", "https://other.example.com/cb"},
+			expectError:    true,
+		},
+	}
+
+	for k, tt := range testcases {
+		t.Run(k, func(t *testing.T) {
+			storage := NewTestingStorage()
+			// The set alone is the registration: no legacy single value, and a
+			// separator that must be ignored.
+			if err := storage.SetClient("set-client", &DefaultClient{
+				Id:           "set-client",
+				RedirectUris: tt.registeredUris,
+				AuthMethod:   AUTH_METHOD_NONE,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			sconfig := NewServerConfig()
+			sconfig.RedirectUriSeparator = ";"
+			sconfig.AllowedAuthorizeTypes = AllowedAuthorizeType{CODE}
+			server := NewServer(sconfig, storage)
+			server.AuthorizeTokenGen = &TestingAuthorizeTokenGen{}
+			resp := server.NewResponse()
+
+			req, err := http.NewRequest("GET", "http://localhost:14000/appauth", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Form = make(url.Values)
+			req.Form.Set("response_type", string(CODE))
+			req.Form.Set("client_id", "set-client")
+			req.Form.Set("state", "a")
+			if tt.redirectUri != "" {
+				req.Form.Set("redirect_uri", tt.redirectUri)
+			}
+
+			if ar := server.HandleAuthorizeRequest(resp, req); ar != nil {
+				ar.Authorized = true
+				server.FinishAuthorizeRequest(resp, req, ar)
+			}
+
+			if tt.expectError {
+				if !resp.IsError || resp.ErrorId != E_INVALID_REQUEST {
+					t.Fatalf("Expected %s, got %v (%v)", E_INVALID_REQUEST, resp.ErrorId, resp.InternalError)
+				}
+				if resp.Type == REDIRECT {
+					t.Fatalf("Response must not redirect to the requested uri %s", resp.URL)
+				}
+				return
+			}
+
+			if resp.IsError {
+				t.Fatalf("Unexpected error: %v (%v)", resp.ErrorId, resp.InternalError)
+			}
+			if resp.Type != REDIRECT || resp.URL != tt.expectedUri {
+				t.Fatalf("Expected redirect to %s, got %s (type %v)", tt.expectedUri, resp.URL, resp.Type)
+			}
+			if _, ok := resp.Output["code"]; !ok {
+				t.Fatal("No authorization code issued")
+			}
+		})
+	}
+}
+
+func TestAuthorizeIssuer(t *testing.T) {
+	issuer := "https://auth.example.com"
+
+	testcases := map[string]struct {
+		issuer         string
+		responseType   string
+		clientID       string
+		expectedIssuer string
+		expectRedirect bool
+	}{
+		"success redirect": {
+			issuer:         issuer,
+			responseType:   string(CODE),
+			clientID:       "1234",
+			expectedIssuer: issuer,
+			expectRedirect: true,
+		},
+		"error redirect": {
+			issuer:         issuer,
+			responseType:   "unknown",
+			clientID:       "1234",
+			expectedIssuer: issuer,
+			expectRedirect: true,
+		},
+		"no issuer configured": {
+			responseType:   string(CODE),
+			clientID:       "1234",
+			expectRedirect: true,
+		},
+		"data error": {
+			issuer:       issuer,
+			responseType: string(CODE),
+			clientID:     "unknown",
+		},
+	}
+
+	for k, tt := range testcases {
+		t.Run(k, func(t *testing.T) {
+			sconfig := NewServerConfig()
+			sconfig.Issuer = tt.issuer
+			sconfig.AllowedAuthorizeTypes = AllowedAuthorizeType{CODE}
+			server := NewServer(sconfig, NewTestingStorage())
+			server.AuthorizeTokenGen = &TestingAuthorizeTokenGen{}
+			resp := server.NewResponse()
+
+			req, err := http.NewRequest("GET", "http://localhost:14000/appauth", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Form = make(url.Values)
+			req.Form.Set("response_type", tt.responseType)
+			req.Form.Set("client_id", tt.clientID)
+			req.Form.Set("state", "a")
+
+			if ar := server.HandleAuthorizeRequest(resp, req); ar != nil {
+				ar.Authorized = true
+				server.FinishAuthorizeRequest(resp, req, ar)
+			}
+
+			if !tt.expectRedirect {
+				if resp.Type == REDIRECT {
+					t.Fatal("Response must not be a redirect")
+				}
+				if _, ok := resp.Output["iss"]; ok {
+					t.Errorf("A data response must not carry iss: %v", resp.Output)
+				}
+				return
+			}
+
+			if resp.Type != REDIRECT {
+				t.Fatalf("Expected a redirect response, got type %v (%v)", resp.Type, resp.InternalError)
+			}
+			redirectUrl, err := resp.GetRedirectUrl()
+			if err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+			parsed, err := url.Parse(redirectUrl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := parsed.Query().Get("iss"); got != tt.expectedIssuer {
+				t.Errorf("Expected iss %q, got %q in %s", tt.expectedIssuer, got, redirectUrl)
+			}
+		})
+	}
+}
+
+func TestAuthorizeCodeRejectPlainPKCE(t *testing.T) {
+	challenge := "12345678901234567890123456789012345678901234567890"
+
+	testcases := map[string]struct {
+		rejectPlain     bool
+		challengeMethod string
+		expectError     bool
+	}{
+		"plain by default": {
+			challengeMethod: "plain",
+		},
+		"plain when rejected": {
+			rejectPlain:     true,
+			challengeMethod: "plain",
+			expectError:     true,
+		},
+		"implicit plain when rejected": {
+			rejectPlain: true,
+			expectError: true,
+		},
+		"S256 when rejected": {
+			rejectPlain:     true,
+			challengeMethod: "S256",
+		},
+	}
+
+	for k, tt := range testcases {
+		t.Run(k, func(t *testing.T) {
+			sconfig := NewServerConfig()
+			sconfig.RejectPlainPKCE = tt.rejectPlain
+			sconfig.AllowedAuthorizeTypes = AllowedAuthorizeType{CODE}
+			server := NewServer(sconfig, NewTestingStorage())
+			server.AuthorizeTokenGen = &TestingAuthorizeTokenGen{}
+			resp := server.NewResponse()
+
+			req, err := http.NewRequest("GET", "http://localhost:14000/appauth", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Form = make(url.Values)
+			req.Form.Set("response_type", string(CODE))
+			req.Form.Set("client_id", "1234")
+			req.Form.Set("state", "a")
+			req.Form.Set("code_challenge", challenge)
+			if tt.challengeMethod != "" {
+				req.Form.Set("code_challenge_method", tt.challengeMethod)
+			}
+
+			if ar := server.HandleAuthorizeRequest(resp, req); ar != nil {
+				ar.Authorized = true
+				server.FinishAuthorizeRequest(resp, req, ar)
+			}
+
+			if tt.expectError {
+				if !resp.IsError || resp.ErrorId != E_INVALID_REQUEST {
+					t.Fatalf("Expected %s, got %v (%v)", E_INVALID_REQUEST, resp.ErrorId, resp.InternalError)
+				}
+				if _, ok := resp.Output["code"]; ok {
+					t.Error("No authorization code should be issued")
+				}
+				return
+			}
+
+			if resp.IsError {
+				t.Fatalf("Unexpected error: %v (%v)", resp.ErrorId, resp.InternalError)
+			}
+			if _, ok := resp.Output["code"]; !ok {
+				t.Fatal("No authorization code issued")
+			}
+		})
+	}
+}

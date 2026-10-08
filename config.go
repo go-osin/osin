@@ -65,20 +65,39 @@ type ServerConfig struct {
 	// alone. Implicit and password grants, iss metadata, DPoP and mTLS are not
 	// affected.
 	EnforceOAuth21 bool
+
+	// Issuer is the authorization server identifier. When set, authorization
+	// responses carry it as the `iss` parameter (rfc9207) - default blank,
+	// which omits the parameter.
+	Issuer string
+
+	// RejectPlainPKCE rejects authorization requests that would use the PKCE
+	// "plain" code_challenge_method, including requests that omit
+	// code_challenge_method (rfc7636 defaults it to "plain") - default false.
+	RejectPlainPKCE bool
+
+	// RequireSenderConstrainedTokens rejects access and refresh tokens whose
+	// sender constraint (AccessData.SenderConstraint) is empty, and refuses to
+	// issue tokens when the storage cannot persist the constraint - default
+	// false.
+	RequireSenderConstrainedTokens bool
 }
 
 // NewServerConfig returns a new ServerConfig with default configuration
 func NewServerConfig() *ServerConfig {
 	return &ServerConfig{
-		AuthorizationExpiration:   250,
-		AccessExpiration:          3600,
-		TokenType:                 "Bearer",
-		AllowedAuthorizeTypes:     AllowedAuthorizeType{CODE},
-		AllowedAccessTypes:        AllowedAccessType{AUTHORIZATION_CODE},
-		ErrorStatusCode:           200,
-		AllowClientSecretInParams: false,
-		AllowGetAccessRequest:     false,
-		RetainTokenAfterRefresh:   false,
-		EnforceOAuth21:            false,
+		AuthorizationExpiration:        250,
+		AccessExpiration:               3600,
+		TokenType:                      "Bearer",
+		AllowedAuthorizeTypes:          AllowedAuthorizeType{CODE},
+		AllowedAccessTypes:             AllowedAccessType{AUTHORIZATION_CODE},
+		ErrorStatusCode:                200,
+		AllowClientSecretInParams:      false,
+		AllowGetAccessRequest:          false,
+		RetainTokenAfterRefresh:        false,
+		EnforceOAuth21:                 false,
+		Issuer:                         "",
+		RejectPlainPKCE:                false,
+		RequireSenderConstrainedTokens: false,
 	}
 }

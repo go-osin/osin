@@ -279,10 +279,10 @@ type clientWithoutMatcher struct {
 	RedirectUri string
 }
 
-func (c *clientWithoutMatcher) GetId() string            { return c.Id }
-func (c *clientWithoutMatcher) GetSecret() string        { return c.Secret }
-func (c *clientWithoutMatcher) GetRedirectUri() string   { return c.RedirectUri }
-func (c *clientWithoutMatcher) GetUserData() any { return nil }
+func (c *clientWithoutMatcher) GetId() string          { return c.Id }
+func (c *clientWithoutMatcher) GetSecret() string      { return c.Secret }
+func (c *clientWithoutMatcher) GetRedirectUri() string { return c.RedirectUri }
+func (c *clientWithoutMatcher) GetUserData() any       { return nil }
 
 func TestGetClientWithoutMatcher(t *testing.T) {
 	myclient := &clientWithoutMatcher{
@@ -357,10 +357,10 @@ type clientWithMatcher struct {
 	RedirectUri string
 }
 
-func (c *clientWithMatcher) GetId() string            { return c.Id }
-func (c *clientWithMatcher) GetSecret() string        { panic("called GetSecret") }
-func (c *clientWithMatcher) GetRedirectUri() string   { return c.RedirectUri }
-func (c *clientWithMatcher) GetUserData() any { return nil }
+func (c *clientWithMatcher) GetId() string          { return c.Id }
+func (c *clientWithMatcher) GetSecret() string      { panic("called GetSecret") }
+func (c *clientWithMatcher) GetRedirectUri() string { return c.RedirectUri }
+func (c *clientWithMatcher) GetUserData() any       { return nil }
 func (c *clientWithMatcher) ClientSecretMatches(secret string) bool {
 	return secret == c.Secret
 }
@@ -464,6 +464,9 @@ func TestAccessAuthorizationCodePKCE(t *testing.T) {
 		req.Form = make(url.Values)
 		req.Form.Set("grant_type", string(AUTHORIZATION_CODE))
 		req.Form.Set("client_id", "public-client")
+		// Parameter credentials are enabled, so the public client has to send
+		// the client_secret parameter; it is allowed to be empty.
+		req.Form.Set("client_secret", "")
 		req.Form.Set("code", "pkce-code")
 		req.Form.Set("state", "a")
 		req.Form.Set("code_verifier", test.Verifier)
@@ -872,4 +875,515 @@ func TestEnforceOAuth21AuthorizationCodeFlow(t *testing.T) {
 			}
 		})
 	}
+}
+
+// senderConstraintStorage is a TestingStorage that declares it persists sender
+// constraints.
+type senderConstraintStorage struct {
+	*TestingStorage
+}
+
+func (s *senderConstraintStorage) Clone() Storage {
+	return s
+}
+
+func (s *senderConstraintStorage) SupportsSenderConstraints() bool {
+	return true
+}
+
+func TestAccessClientAuthMethod(t *testing.T) {
+	redirectUri := "http://localhost:14000/appauth"
+
+	testcases := map[string]struct {
+		client         Client
+		enforceOAuth21 bool
+		allowParams    bool
+		basicAuth      bool
+		clientID       string
+		secret         string
+		secretParam    bool
+		expectError    string
+	}{
+		"none client holding a secret identifies with client_id alone": {
+			client:   &DefaultClient{Id: "none-client", Secret: "aabbccdd", RedirectUri: redirectUri, AuthMethod: AUTH_METHOD_NONE},
+			clientID: "none-client",
+		},
+		"none client identifies with client_id alone when parameter credentials are enabled": {
+			client:      &DefaultClient{Id: "none-client", Secret: "aabbccdd", RedirectUri: redirectUri, AuthMethod: AUTH_METHOD_NONE},
+			allowParams: true,
+			clientID:    "none-client",
+		},
+		"shared secret client with basic auth": {
+			client:    &DefaultClient{Id: "basic-client", Secret: "aabbccdd", RedirectUri: redirectUri, AuthMethod: AUTH_METHOD_CLIENT_SECRET_BASIC},
+			basicAuth: true,
+			clientID:  "basic-client",
+			secret:    "aabbccdd",
+		},
+		"shared secret client with client_id alone": {
+			client:      &DefaultClient{Id: "basic-client", Secret: "aabbccdd", RedirectUri: redirectUri, AuthMethod: AUTH_METHOD_CLIENT_SECRET_BASIC},
+			clientID:    "basic-client",
+			expectError: E_INVALID_REQUEST,
+		},
+		"private_key_jwt client with client_id alone": {
+			client:         &DefaultClient{Id: "jwt-client", RedirectUri: redirectUri, AuthMethod: AUTH_METHOD_PRIVATE_KEY_JWT},
+			enforceOAuth21: true,
+			clientID:       "jwt-client",
+			expectError:    E_INVALID_CLIENT,
+		},
+		"private_key_jwt client with a shared secret": {
+			client:         &DefaultClient{Id: "jwt-client", RedirectUri: redirectUri, AuthMethod: AUTH_METHOD_PRIVATE_KEY_JWT},
+			enforceOAuth21: true,
+			allowParams:    true,
+			clientID:       "jwt-client",
+			secret:         "aabbccdd",
+			expectError:    E_UNAUTHORIZED_CLIENT,
+		},
+		"client without a declared method and no secret": {
+			client:      &clientWithoutMatcher{Id: "legacy-public", RedirectUri: redirectUri},
+			allowParams: true,
+			clientID:    "legacy-public",
+			secretParam: true,
+		},
+		"client without a declared method holding a secret": {
+			client:      &clientWithoutMatcher{Id: "legacy-secret", Secret: "aabbccdd", RedirectUri: redirectUri},
+			clientID:    "legacy-secret",
+			expectError: E_INVALID_REQUEST,
+		},
+		"no client credentials": {
+			client:      &DefaultClient{Id: "none-client", Secret: "aabbccdd", RedirectUri: redirectUri, AuthMethod: AUTH_METHOD_NONE},
+			expectError: E_INVALID_REQUEST,
+		},
+	}
+
+	for k, tt := range testcases {
+		t.Run(k, func(t *testing.T) {
+			storage := NewTestingStorage()
+			if err := storage.SetClient(tt.client.GetId(), tt.client); err != nil {
+				t.Fatal(err)
+			}
+			sconfig := NewServerConfig()
+			sconfig.EnforceOAuth21 = tt.enforceOAuth21
+			sconfig.AllowClientSecretInParams = tt.allowParams
+			sconfig.AllowedAccessTypes = AllowedAccessType{PASSWORD}
+			server := NewServer(sconfig, storage)
+			server.AccessTokenGen = &TestingAccessTokenGen{}
+			resp := server.NewResponse()
+
+			req, err := http.NewRequest("POST", redirectUri, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.basicAuth {
+				req.SetBasicAuth(tt.clientID, tt.secret)
+			}
+			req.Form = make(url.Values)
+			req.Form.Set("grant_type", string(PASSWORD))
+			req.Form.Set("username", "testing")
+			req.Form.Set("password", "testing")
+			if tt.clientID != "" {
+				req.Form.Set("client_id", tt.clientID)
+			}
+			if tt.secretParam || tt.secret != "" {
+				req.Form.Set("client_secret", tt.secret)
+			}
+			req.PostForm = make(url.Values)
+
+			if ar := server.HandleAccessRequest(resp, req); ar != nil {
+				ar.Authorized = true
+				server.FinishAccessRequest(resp, req, ar)
+			}
+
+			if tt.expectError != "" {
+				if !resp.IsError || resp.ErrorId != tt.expectError {
+					t.Fatalf("Expected %s, got %v (%v)", tt.expectError, resp.ErrorId, resp.InternalError)
+				}
+				if _, ok := resp.Output["access_token"]; ok {
+					t.Error("No access token should be issued")
+				}
+				return
+			}
+
+			if resp.IsError {
+				t.Fatalf("Unexpected error: %v (%v)", resp.ErrorId, resp.InternalError)
+			}
+			if d := resp.Output["access_token"]; d != "1" {
+				t.Fatalf("Unexpected access token: %s", d)
+			}
+		})
+	}
+}
+
+func TestAccessRedirectUriSet(t *testing.T) {
+	first := "https://app.example.com/cb"
+	second := "https://other.example.com/cb"
+	setClient := &DefaultClient{
+		Id:           "set-client",
+		RedirectUris: []string{first, second},
+		AuthMethod:   AUTH_METHOD_NONE,
+	}
+
+	testcases := map[string]struct {
+		grantType   AccessRequestType
+		redirectUri string
+		seed        func(*testing.T, *TestingStorage)
+		expectedUri string
+	}{
+		"authorization code": {
+			grantType:   AUTHORIZATION_CODE,
+			redirectUri: second,
+			seed: func(t *testing.T, storage *TestingStorage) {
+				if err := storage.SaveAuthorize(&AuthorizeData{
+					Client:      setClient,
+					Code:        "set-code",
+					ExpiresIn:   3600,
+					CreatedAt:   time.Now(),
+					RedirectUri: second,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			},
+			expectedUri: second,
+		},
+		"refresh token": {
+			grantType: REFRESH_TOKEN,
+			seed: func(t *testing.T, storage *TestingStorage) {
+				if err := storage.SaveAccess(&AccessData{
+					Client:       setClient,
+					AccessToken:  "set-access",
+					RefreshToken: "set-refresh",
+					ExpiresIn:    3600,
+					CreatedAt:    time.Now(),
+					RedirectUri:  second,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			},
+			expectedUri: second,
+		},
+		"password": {
+			grantType:   PASSWORD,
+			expectedUri: first,
+		},
+		"client credentials": {
+			grantType:   CLIENT_CREDENTIALS,
+			expectedUri: first,
+		},
+		"assertion": {
+			grantType:   ASSERTION,
+			expectedUri: first,
+		},
+	}
+
+	for k, tt := range testcases {
+		t.Run(k, func(t *testing.T) {
+			storage := NewTestingStorage()
+			if err := storage.SetClient(setClient.Id, setClient); err != nil {
+				t.Fatal(err)
+			}
+			if tt.seed != nil {
+				tt.seed(t, storage)
+			}
+
+			sconfig := NewServerConfig()
+			sconfig.RedirectUriSeparator = ";"
+			sconfig.AllowedAccessTypes = AllowedAccessType{AUTHORIZATION_CODE, REFRESH_TOKEN, PASSWORD, CLIENT_CREDENTIALS, ASSERTION}
+			server := NewServer(sconfig, storage)
+			server.AccessTokenGen = &TestingAccessTokenGen{}
+			resp := server.NewResponse()
+
+			req, err := http.NewRequest("POST", first, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Form = make(url.Values)
+			req.Form.Set("grant_type", string(tt.grantType))
+			req.Form.Set("client_id", setClient.Id)
+			if tt.redirectUri != "" {
+				req.Form.Set("redirect_uri", tt.redirectUri)
+			}
+			switch tt.grantType {
+			case AUTHORIZATION_CODE:
+				req.Form.Set("code", "set-code")
+			case REFRESH_TOKEN:
+				req.Form.Set("refresh_token", "set-refresh")
+			case PASSWORD:
+				req.Form.Set("username", "testing")
+				req.Form.Set("password", "testing")
+			case ASSERTION:
+				req.Form.Set("assertion_type", "testing")
+				req.Form.Set("assertion", "testing")
+			}
+			req.PostForm = make(url.Values)
+
+			ar := server.HandleAccessRequest(resp, req)
+			if ar == nil {
+				t.Fatalf("Unexpected error: %v (%v)", resp.ErrorId, resp.InternalError)
+			}
+			if ar.RedirectUri != tt.expectedUri {
+				t.Errorf("Expected redirect uri %s, got %s", tt.expectedUri, ar.RedirectUri)
+			}
+
+			ar.Authorized = true
+			server.FinishAccessRequest(resp, req, ar)
+			if resp.IsError {
+				t.Fatalf("Unexpected error: %v (%v)", resp.ErrorId, resp.InternalError)
+			}
+			if d := resp.Output["access_token"]; d != "1" {
+				t.Errorf("Unexpected access token: %s", d)
+			}
+		})
+	}
+}
+
+func TestAccessSenderConstrainedTokens(t *testing.T) {
+	// A deployment that requires sender constrained tokens does not issue
+	// tokens through a storage that cannot persist the binding.
+	t.Run("storage without the capability", func(t *testing.T) {
+		sconfig := NewServerConfig()
+		sconfig.RequireSenderConstrainedTokens = true
+		sconfig.AllowedAccessTypes = AllowedAccessType{CLIENT_CREDENTIALS}
+		storage := NewTestingStorage()
+		server := NewServer(sconfig, storage)
+		server.AccessTokenGen = &TestingAccessTokenGen{}
+		resp := server.NewResponse()
+
+		req, err := http.NewRequest("POST", "http://localhost:14000/appauth", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBasicAuth("1234", "aabbccdd")
+		req.Form = make(url.Values)
+		req.Form.Set("grant_type", string(CLIENT_CREDENTIALS))
+		req.PostForm = make(url.Values)
+
+		if ar := server.HandleAccessRequest(resp, req); ar != nil {
+			ar.Authorized = true
+			server.FinishAccessRequest(resp, req, ar)
+		}
+
+		if !resp.IsError || resp.ErrorId != E_SERVER_ERROR {
+			t.Fatalf("Expected %s, got %v (%v)", E_SERVER_ERROR, resp.ErrorId, resp.InternalError)
+		}
+		if _, ok := resp.Output["access_token"]; ok {
+			t.Error("No access token should be issued")
+		}
+		if _, err := storage.LoadAccess("1"); err == nil {
+			t.Error("No access token should be saved")
+		}
+	})
+
+	// A refresh token that lost its binding is rejected while the policy is
+	// on, and no new token is issued.
+	t.Run("unbound refresh token", func(t *testing.T) {
+		storage := &senderConstraintStorage{TestingStorage: NewTestingStorage()}
+		if err := storage.SaveAccess(&AccessData{
+			Client:       storage.clients["1234"],
+			AccessToken:  "unbound-access",
+			RefreshToken: "unbound-refresh",
+			ExpiresIn:    3600,
+			CreatedAt:    time.Now(),
+			RedirectUri:  "http://localhost:14000/appauth",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		sconfig := NewServerConfig()
+		sconfig.RequireSenderConstrainedTokens = true
+		sconfig.AllowedAccessTypes = AllowedAccessType{REFRESH_TOKEN}
+		server := NewServer(sconfig, storage)
+		server.AccessTokenGen = &TestingAccessTokenGen{}
+		resp := server.NewResponse()
+
+		req, err := http.NewRequest("POST", "http://localhost:14000/appauth", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBasicAuth("1234", "aabbccdd")
+		req.Form = make(url.Values)
+		req.Form.Set("grant_type", string(REFRESH_TOKEN))
+		req.Form.Set("refresh_token", "unbound-refresh")
+		req.PostForm = make(url.Values)
+
+		if ar := server.HandleAccessRequest(resp, req); ar != nil {
+			ar.Authorized = true
+			server.FinishAccessRequest(resp, req, ar)
+		}
+
+		if !resp.IsError || resp.ErrorId != E_INVALID_GRANT {
+			t.Fatalf("Expected %s, got %v (%v)", E_INVALID_GRANT, resp.ErrorId, resp.InternalError)
+		}
+		if _, ok := resp.Output["access_token"]; ok {
+			t.Error("No access token should be issued")
+		}
+		if _, err := storage.LoadRefresh("unbound-refresh"); err != nil {
+			t.Errorf("The rejected refresh token should not be consumed: %s", err)
+		}
+	})
+
+	// A refresh token that carries a binding is exchanged as usual.
+	t.Run("bound refresh token", func(t *testing.T) {
+		storage := &senderConstraintStorage{TestingStorage: NewTestingStorage()}
+		if err := storage.SaveAccess(&AccessData{
+			Client:           storage.clients["1234"],
+			AccessToken:      "bound-access",
+			RefreshToken:     "bound-refresh",
+			ExpiresIn:        3600,
+			CreatedAt:        time.Now(),
+			RedirectUri:      "http://localhost:14000/appauth",
+			SenderConstraint: "jkt-1",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		sconfig := NewServerConfig()
+		sconfig.RequireSenderConstrainedTokens = true
+		sconfig.AllowedAccessTypes = AllowedAccessType{REFRESH_TOKEN}
+		server := NewServer(sconfig, storage)
+		server.AccessTokenGen = &TestingAccessTokenGen{}
+		resp := server.NewResponse()
+
+		req, err := http.NewRequest("POST", "http://localhost:14000/appauth", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBasicAuth("1234", "aabbccdd")
+		req.Form = make(url.Values)
+		req.Form.Set("grant_type", string(REFRESH_TOKEN))
+		req.Form.Set("refresh_token", "bound-refresh")
+		req.PostForm = make(url.Values)
+
+		if ar := server.HandleAccessRequest(resp, req); ar != nil {
+			ar.Authorized = true
+			server.FinishAccessRequest(resp, req, ar)
+		}
+
+		if resp.IsError {
+			t.Fatalf("Unexpected error: %v (%v)", resp.ErrorId, resp.InternalError)
+		}
+		if d := resp.Output["access_token"]; d != "1" {
+			t.Fatalf("Unexpected access token: %s", d)
+		}
+		replacement, err := storage.LoadAccess("1")
+		if err != nil {
+			t.Fatalf("The replacement access token should be saved: %s", err)
+		}
+		if replacement.SenderConstraint != "jkt-1" {
+			t.Errorf("The replacement token should keep the binding, got %q", replacement.SenderConstraint)
+		}
+	})
+
+	// The policy is off by default: an unbound token is exchanged as before.
+	t.Run("policy off", func(t *testing.T) {
+		storage := NewTestingStorage()
+		sconfig := NewServerConfig()
+		sconfig.AllowedAccessTypes = AllowedAccessType{REFRESH_TOKEN}
+		server := NewServer(sconfig, storage)
+		server.AccessTokenGen = &TestingAccessTokenGen{}
+		resp := server.NewResponse()
+
+		req, err := http.NewRequest("POST", "http://localhost:14000/appauth", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBasicAuth("1234", "aabbccdd")
+		req.Form = make(url.Values)
+		req.Form.Set("grant_type", string(REFRESH_TOKEN))
+		req.Form.Set("refresh_token", "r9999")
+		req.PostForm = make(url.Values)
+
+		if ar := server.HandleAccessRequest(resp, req); ar != nil {
+			ar.Authorized = true
+			server.FinishAccessRequest(resp, req, ar)
+		}
+
+		if resp.IsError {
+			t.Fatalf("Unexpected error: %v (%v)", resp.ErrorId, resp.InternalError)
+		}
+		if d := resp.Output["access_token"]; d != "1" {
+			t.Fatalf("Unexpected access token: %s", d)
+		}
+	})
+
+	// A capable storage is not enough: a token that would arrive at the client
+	// unbound is refused at issuance, not at its first use.
+	t.Run("capable storage without a binding", func(t *testing.T) {
+		storage := &senderConstraintStorage{TestingStorage: NewTestingStorage()}
+		sconfig := NewServerConfig()
+		sconfig.RequireSenderConstrainedTokens = true
+		sconfig.AllowedAccessTypes = AllowedAccessType{CLIENT_CREDENTIALS}
+		server := NewServer(sconfig, storage)
+		server.AccessTokenGen = &TestingAccessTokenGen{}
+		resp := server.NewResponse()
+
+		req, err := http.NewRequest("POST", "http://localhost:14000/appauth", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBasicAuth("1234", "aabbccdd")
+		req.Form = make(url.Values)
+		req.Form.Set("grant_type", string(CLIENT_CREDENTIALS))
+		req.PostForm = make(url.Values)
+
+		if ar := server.HandleAccessRequest(resp, req); ar != nil {
+			ar.Authorized = true
+			server.FinishAccessRequest(resp, req, ar)
+		}
+
+		if !resp.IsError || resp.ErrorId != E_SERVER_ERROR {
+			t.Fatalf("Expected %s, got %v (%v)", E_SERVER_ERROR, resp.ErrorId, resp.InternalError)
+		}
+		if _, ok := resp.Output["access_token"]; ok {
+			t.Error("No access token should be issued")
+		}
+		if _, err := storage.LoadAccess("1"); err == nil {
+			t.Error("No access token should be saved")
+		}
+	})
+
+	// An access request that carries the binding is issued as usual.
+	t.Run("capable storage with a binding", func(t *testing.T) {
+		storage := &senderConstraintStorage{TestingStorage: NewTestingStorage()}
+		sconfig := NewServerConfig()
+		sconfig.RequireSenderConstrainedTokens = true
+		sconfig.AllowedAccessTypes = AllowedAccessType{CLIENT_CREDENTIALS}
+		server := NewServer(sconfig, storage)
+		server.AccessTokenGen = &TestingAccessTokenGen{}
+		resp := server.NewResponse()
+
+		req, err := http.NewRequest("POST", "http://localhost:14000/appauth", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBasicAuth("1234", "aabbccdd")
+		req.Form = make(url.Values)
+		req.Form.Set("grant_type", string(CLIENT_CREDENTIALS))
+		req.PostForm = make(url.Values)
+
+		if ar := server.HandleAccessRequest(resp, req); ar != nil {
+			ar.Authorized = true
+			ar.ForceAccessData = &AccessData{
+				Client:           ar.Client,
+				AccessToken:      "bound-access",
+				ExpiresIn:        3600,
+				CreatedAt:        server.Now(),
+				RedirectUri:      "http://localhost:14000/appauth",
+				SenderConstraint: "jkt-1",
+			}
+			server.FinishAccessRequest(resp, req, ar)
+		}
+
+		if resp.IsError {
+			t.Fatalf("Unexpected error: %v (%v)", resp.ErrorId, resp.InternalError)
+		}
+		if d := resp.Output["access_token"]; d != "bound-access" {
+			t.Fatalf("Unexpected access token: %s", d)
+		}
+		saved, err := storage.LoadAccess("bound-access")
+		if err != nil {
+			t.Fatalf("The bound access token should be saved: %s", err)
+		}
+		if saved.SenderConstraint != "jkt-1" {
+			t.Errorf("Unexpected sender constraint: %s", saved.SenderConstraint)
+		}
+	})
 }

@@ -141,24 +141,19 @@ func (s *Server) HandleAuthorizeRequest(w *Response, r *http.Request) *Authorize
 		w.SetErrorState(E_UNAUTHORIZED_CLIENT, "", ret.State)
 		return nil
 	}
-	if ret.Client.GetRedirectUri() == "" {
+	if !clientHasRedirectUri(ret.Client) {
 		w.SetErrorState(E_UNAUTHORIZED_CLIENT, "", ret.State)
 		return nil
 	}
 
 	// check redirect uri, if there are multiple client redirect uri's
 	// don't set the uri
-	registered := ret.Client.GetRedirectUri()
-	firstURI := FirstUri(registered, s.Config.RedirectUriSeparator)
-	if ret.RedirectUri == "" && firstURI == registered {
-		ret.RedirectUri = firstURI
+	registered, validateRedirectUri := s.clientRedirectUris(ret.Client)
+	if ret.RedirectUri == "" && len(registered) == 1 {
+		ret.RedirectUri = registered[0]
 	}
 
-	validateRedirectUri := ValidateUriList
-	if s.Config.EnforceOAuth21 {
-		validateRedirectUri = validateUriListExact
-	}
-	if realRedirectUri, err := validateRedirectUri(ret.Client.GetRedirectUri(), ret.RedirectUri, s.Config.RedirectUriSeparator); err != nil {
+	if realRedirectUri, err := validateRedirectUri(ret.RedirectUri); err != nil {
 		w.SetErrorState(E_INVALID_REQUEST, "", ret.State)
 		w.InternalError = err
 		return nil
@@ -182,7 +177,7 @@ func (s *Server) HandleAuthorizeRequest(w *Response, r *http.Request) *Authorize
 					w.SetErrorState(E_INVALID_REQUEST, "code_challenge required (rfc7636)", ret.State)
 					return nil
 				}
-				if s.Config.RequirePKCEForPublicClients && CheckClientSecret(ret.Client, "") {
+				if s.Config.RequirePKCEForPublicClients && clientSecretMatches(ret.Client, "") {
 					// https://tools.ietf.org/html/rfc7636#section-4.4.1
 					w.SetErrorState(E_INVALID_REQUEST, "code_challenge (rfc7636) required for public clients", ret.State)
 					return nil
@@ -196,6 +191,10 @@ func (s *Server) HandleAuthorizeRequest(w *Response, r *http.Request) *Authorize
 				if codeChallengeMethod != PKCE_PLAIN && codeChallengeMethod != PKCE_S256 {
 					// https://tools.ietf.org/html/rfc7636#section-4.4.1
 					w.SetErrorState(E_INVALID_REQUEST, "code_challenge_method transform algorithm not supported (rfc7636)", ret.State)
+					return nil
+				}
+				if s.Config.RejectPlainPKCE && codeChallengeMethod == PKCE_PLAIN {
+					w.SetErrorState(E_INVALID_REQUEST, "code_challenge_method plain is not allowed", ret.State)
 					return nil
 				}
 

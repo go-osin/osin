@@ -1,7 +1,6 @@
 package osin
 
 import (
-	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/url"
@@ -19,9 +18,67 @@ type BearerAuth struct {
 	Code string
 }
 
+// clientSecretUse says how the shared secret of a client takes part in token
+// endpoint authentication.
+type clientSecretUse int
+
+const (
+	// clientUsesSharedSecret - the client authenticates with a shared secret,
+	// either through the legacy GetSecret()/ClientSecretMatcher path (the
+	// client did not declare a method) or through one of the client_secret_*
+	// methods.
+	clientUsesSharedSecret clientSecretUse = iota
+
+	// clientUsesNoSecret - the client declared the `none` method and identifies
+	// itself with the client_id request parameter alone.
+	clientUsesNoSecret
+
+	// clientUsesOtherCredential - the client declared a method whose
+	// credentials are not a shared secret (private_key_jwt, tls_client_auth,
+	// client_secret_jwt, and any method this version does not know).
+	clientUsesOtherCredential
+)
+
+// clientSecretUseOf resolves how a client uses a shared secret. Clients that
+// declare no method keep the previous behaviour, where a blank secret means a
+// public client.
+func clientSecretUseOf(client Client) clientSecretUse {
+	authMethod, ok := client.(ClientAuthMethod)
+	if !ok {
+		return clientUsesSharedSecret
+	}
+
+	switch authMethod.GetAuthMethod() {
+	case "":
+		return clientUsesSharedSecret
+	case AUTH_METHOD_NONE:
+		return clientUsesNoSecret
+	case AUTH_METHOD_CLIENT_SECRET_POST, AUTH_METHOD_CLIENT_SECRET_BASIC:
+		return clientUsesSharedSecret
+	default:
+		return clientUsesOtherCredential
+	}
+}
+
 // CheckClientSecret determines whether the given secret matches a secret held by the client.
 // Public clients return true for a secret of ""
 func CheckClientSecret(client Client, secret string) bool {
+	switch clientSecretUseOf(client) {
+	case clientUsesNoSecret:
+		// A client without a shared secret is identified by the client_id alone
+		return secret == ""
+	case clientUsesOtherCredential:
+		// The client declared credentials that this comparison cannot check,
+		// so no shared secret matches
+		return false
+	}
+
+	return clientSecretMatches(client, secret)
+}
+
+// clientSecretMatches compares the secret held by the client, ignoring the
+// declared token endpoint authentication method.
+func clientSecretMatches(client Client, secret string) bool {
 	switch client := client.(type) {
 	case ClientSecretMatcher:
 		// Prefer the more secure method of giving the secret to the client for comparison
@@ -34,34 +91,24 @@ func CheckClientSecret(client Client, secret string) bool {
 
 // Return authorization header data
 func CheckBasicAuth(r *http.Request) (*BasicAuth, error) {
-	// TODO: migrate to r.BasicAuth()
 	if r.Header.Get("Authorization") == "" {
 		return nil, nil
 	}
 
-	kind, encoded, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-	if !ok || kind != "Basic" {
-		return nil, errors.New("invalid authorization header")
-	}
-
-	b, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return nil, err
-	}
-	user, pass, ok := strings.Cut(string(b), ":")
+	username, password, ok := r.BasicAuth()
 	if !ok {
-		return nil, errors.New("invalid authorization message")
+		return nil, errors.New("invalid authorization header")
 	}
 
 	// Decode the client_id and client_secret pairs as per
 	// https://tools.ietf.org/html/rfc6749#section-2.3.1
 
-	username, err := url.QueryUnescape(user)
+	username, err := url.QueryUnescape(username)
 	if err != nil {
 		return nil, err
 	}
 
-	password, err := url.QueryUnescape(pass)
+	password, err = url.QueryUnescape(password)
 	if err != nil {
 		return nil, err
 	}
@@ -96,35 +143,41 @@ func CheckBearerAuth(r *http.Request) *BearerAuth {
 // otherwise gets it from the header.
 // Sets an error on the response if no auth is present or a server error occurs.
 func (s *Server) getClientAuth(w *Response, r *http.Request, allowQueryParams bool) *BasicAuth {
-	username, password, baOk := r.BasicAuth()
-	if baOk {
-		// If BasicAuth header is present, the client secret (password) must not be empty.
-		// This is required for standard Basic Authentication.
-		if password == "" {
-			s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("empty client secret"), "get_client_auth=%s", "check auth error")
-			return nil
-		}
-		return &BasicAuth{
-			Username: username,
-			Password: password,
+	if allowQueryParams {
+		// Allow for auth without password
+		if username := r.FormValue("client_id"); username != "" {
+			if _, hasSecret := r.Form["client_secret"]; hasSecret {
+				return &BasicAuth{
+					Username: username,
+					Password: r.FormValue("client_secret"),
+				}
+			}
 		}
 	}
 
-	// If no BasicAuth header found, optionally fall back to form parameters.
-	// EnforceOAuth21 clients without a secret identify themselves with the
-	// client_id parameter alone, so it is accepted regardless of
-	// AllowClientSecretInParams. The client_secret parameter is only read when
-	// parameter credentials are enabled.
-	if allowQueryParams || s.Config.EnforceOAuth21 {
-		username = r.FormValue("client_id")
-		if allowQueryParams {
-			password = r.FormValue("client_secret")
+	auth, err := CheckBasicAuth(r)
+	if err != nil {
+		s.setErrorAndLog(w, E_INVALID_REQUEST, err, "get_client_auth=%s", "check auth error")
+		return nil
+	}
+	if auth != nil {
+		// If the Authorization header is present, the client secret (password)
+		// must not be empty. This is required for standard Basic Authentication.
+		if auth.Password == "" {
+			s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("empty client secret"), "get_client_auth=%s", "check auth error")
+			return nil
 		}
-		if username != "" {
-			// In form parameters, client_secret may be empty (e.g. OAuth2 PKCE flow).
+		return auth
+	}
+
+	// No credentials were sent: clients without a shared secret identify
+	// themselves with the client_id parameter alone. That is a 2.1 client
+	// when EnforceOAuth21 is set, and a client that declared the `none`
+	// token endpoint authentication method in any configuration.
+	if username := r.FormValue("client_id"); username != "" {
+		if s.Config.EnforceOAuth21 || clientIdentifiesWithIDOnly(w.Storage, username) {
 			return &BasicAuth{
 				Username: username,
-				Password: password,
 			}
 		}
 	}
@@ -132,4 +185,19 @@ func (s *Server) getClientAuth(w *Response, r *http.Request, allowQueryParams bo
 	// No valid client authentication provided
 	s.setErrorAndLog(w, E_INVALID_REQUEST, errors.New("Client authentication not sent"), "get_client_auth=%s", "client authentication not sent")
 	return nil
+}
+
+// clientIdentifiesWithIDOnly reports whether the client stored under id
+// declared the `none` token endpoint authentication method, which lets it
+// authenticate with the client_id request parameter alone.
+func clientIdentifiesWithIDOnly(storage Storage, id string) bool {
+	if storage == nil {
+		// a response without storage cannot resolve the client
+		return false
+	}
+	client, err := storage.GetClient(id)
+	if err != nil || client == nil {
+		return false
+	}
+	return clientSecretUseOf(client) == clientUsesNoSecret
 }

@@ -23,6 +23,64 @@ that have no secret may identify themselves at the token endpoint with the reque
 still authenticate. Implicit and password grants, `iss` metadata, DPoP and mTLS are not
 affected by this flag.
 
+### OAuth 2.1 client registration and token binding
+
+The `Client` and `Storage` method sets are unchanged, so existing implementations keep compiling
+and behaving as before. Everything below is additive and opt-in.
+
+**Redirect URI sets.** A client may implement `ClientRedirectUriSet`:
+
+````go
+func (c *CimdClient) GetRedirectUris() []string { return c.metadata.RedirectURIs }
+````
+
+When it returns a non-empty set, the authorization and token endpoints compare the requested
+`redirect_uri` against every entry of that set exactly, keeping the RFC 8252 loopback port
+exception for `http://127.0.0.1` and `http://[::1]`. Neither `RedirectUriSeparator` nor
+`EnforceOAuth21` applies to such a client: registering a set is what selects exact matching. A
+client that returns no set keeps using `GetRedirectUri()` and the existing rules.
+
+**Token endpoint authentication method.** A client may implement `ClientAuthMethod`:
+
+````go
+func (c *CimdClient) GetAuthMethod() osin.TokenEndpointAuthMethod { return osin.AUTH_METHOD_NONE }
+````
+
+An `AUTH_METHOD_NONE` client identifies itself at the token endpoint with the `client_id`
+parameter alone, even when `GetSecret()` returns a non-empty string, regardless of
+`AllowClientSecretInParams`. A client that declares any other method never authenticates through
+a shared secret: `private_key_jwt`, `tls_client_auth` and `client_secret_jwt` clients are rejected
+at the token endpoint instead of being treated as public clients. A client that declares nothing
+keeps the previous rule, where a blank `GetSecret()` means a public client. `DefaultClient`
+implements both optional interfaces through its `RedirectUris` and `AuthMethod` fields.
+
+**Issuer.** Setting `ServerConfig.Issuer` makes authorization responses carry the `iss` parameter
+(RFC 9207), in the query of code responses and in the fragment of implicit responses. It is
+omitted while the field is blank, and it is never added to token responses or to data errors.
+
+**Rejecting `plain` PKCE.** RFC 9700 requires authorization servers to support PKCE, not to refuse
+the `plain` method, so refusing it is a deployment choice: setting `ServerConfig.RejectPlainPKCE`
+rejects authorization requests that explicitly use `code_challenge_method=plain` and those that
+omit the parameter, which RFC 7636 defaults to `plain`.
+
+**Sender constrained tokens.** `AccessData.SenderConstraint` carries the binding of a token to the
+key material the client demonstrated at the token endpoint (a DPoP JWK thumbprint, an mTLS
+certificate thumbprint, ...); its zero value means the token is not bound. The library does not
+perform the proof or certificate validation itself, and it does not choose the binding: the
+integration writes `AccessData.SenderConstraint` from its `AccessTokenGen.GenerateAccessToken`
+before the record reaches the storage, or supplies the whole record through
+`AccessRequest.ForceAccessData`. Setting
+`ServerConfig.RequireSenderConstrainedTokens` rejects refresh token exchanges and access token
+lookups whose stored token has no binding, so a storage that drops the field on the way in turns
+into a visible `invalid_grant` rather than an unconstrained token. Such a deployment must also
+implement `SenderConstraintStorage` on the storage; without it, issuing a token fails with
+`server_error`.
+
+None of this requires downstream changes: `Client` and `Storage` gained no methods, and the new
+`ServerConfig` fields default to the current behavior. The one build breakage Go does not exclude
+is the usual one for exported structs gaining fields: unkeyed struct literals of `DefaultClient`,
+`AccessData`, `ServerConfig` and `Response` must be given field names.
+
 Using it, you can build your own OAuth2 authentication service.
 
 The library implements the majority of the specification, like authorization and token endpoints, and authorization code, implicit, resource owner and client credentials grant types.

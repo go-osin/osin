@@ -50,8 +50,12 @@ func (s *Server) HandleInfoRequest(w *Response, r *http.Request) *InfoRequest {
 		s.setErrorAndLog(w, E_UNAUTHORIZED_CLIENT, nil, "handle_info_request=%s", "access data client is nil")
 		return nil
 	}
-	if ret.AccessData.Client.GetRedirectUri() == "" {
+	if !clientHasRedirectUri(ret.AccessData.Client) {
 		s.setErrorAndLog(w, E_UNAUTHORIZED_CLIENT, nil, "handle_info_request=%s", "access data client redirect uri is empty")
+		return nil
+	}
+	if s.Config.RequireSenderConstrainedTokens && ret.AccessData.SenderConstraint == "" {
+		s.setErrorAndLog(w, E_INVALID_GRANT, nil, "handle_info_request=%s", "sender constraint missing")
 		return nil
 	}
 	if ret.AccessData.IsExpiredAt(s.Now()) {
@@ -73,7 +77,7 @@ func (s *Server) FinishInfoRequest(w *Response, r *http.Request, ir *InfoRequest
 	w.Output["client_id"] = ir.AccessData.Client.GetId()
 	w.Output["access_token"] = ir.AccessData.AccessToken
 	w.Output["token_type"] = s.Config.TokenType
-	w.Output["expires_in"] = time.Until(ir.AccessData.ExpireAt()) / time.Second
+	w.Output["expires_in"] = ir.AccessData.ExpireAt().Sub(s.Now()) / time.Second
 	if ir.AccessData.RefreshToken != "" {
 		w.Output["refresh_token"] = ir.AccessData.RefreshToken
 	}

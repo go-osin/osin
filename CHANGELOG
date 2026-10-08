@@ -1,3 +1,42 @@
+2026-09-20 (v1.2.0)
+==================
+* NEW: additive OAuth 2.1 extensions. Client and Storage keep their method
+  sets; every addition defaults to the previous behavior.
+  - ClientRedirectUriSet: a client returning a non-empty GetRedirectUris()
+    set is matched entry by entry, exactly, with the RFC 8252 §7.3 loopback
+    port exception. RedirectUriSeparator and EnforceOAuth21 do not apply to
+    that client. An empty set falls back to GetRedirectUri().
+  - ClientAuthMethod with TokenEndpointAuthMethod values from the RFC 7591
+    registry: AUTH_METHOD_NONE clients identify themselves at the token
+    endpoint with the client_id parameter alone, even when GetSecret() is
+    not blank; clients declaring private_key_jwt, tls_client_auth or
+    client_secret_jwt are no longer treated as public clients, and their
+    shared secret comparison never passes. Clients declaring nothing keep
+    the GetSecret() rule.
+  - ServerConfig.Issuer: when set, authorization responses carry the `iss`
+    parameter (RFC 9207) on both success and error redirects; token
+    responses and data errors never carry it.
+  - ServerConfig.RejectPlainPKCE: rejects authorization requests that use
+    or default to code_challenge_method=plain.
+  - AccessData.SenderConstraint carries a DPoP / mTLS token binding (zero
+    value: unbound). ServerConfig.RequireSenderConstrainedTokens rejects
+    refresh exchanges and access token lookups of unbound tokens, refuses
+    to issue a token that would arrive unbound unless it replaces a token
+    that already carries a binding, and requires the storage to implement
+    SenderConstraintStorage.
+  - DefaultClient gained RedirectUris []string and AuthMethod fields, and
+    copies them in CopyFrom. AccessData and ServerConfig gained fields.
+* FIX: the client_id and client_secret in the Authorization header are
+  decoded as application/x-www-form-urlencoded, as RFC 6749 §2.3.1
+  requires, so a client whose identifier or secret contains +, % or &
+  authenticates at the token endpoint. An Authorization header carrying an
+  empty client secret is still rejected as invalid_request.
+* Compatibility: downstream Client / Storage implementations need no
+  changes, and the default configuration is untouched. The only build
+  breakage is Go's usual exclusion for exported structs: unkeyed struct
+  literals of DefaultClient, AccessData, ServerConfig and Response must
+  be given field names.
+
 2026-09-18 (v1.1.0)
 ==================
 * NEW: opt-in OAuth 2.1 enforcement behind ServerConfig.EnforceOAuth21.
